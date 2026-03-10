@@ -11,11 +11,43 @@ public static class SemanticSearchTools
     /// Searches for symbols by name pattern across all projects (or a specific one).
     /// namePattern supports substring match; kind filters by SymbolKind name (e.g. "Method", "NamedType").
     /// </summary>
+    private static readonly Dictionary<string, SymbolKind> KindAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["class"] = SymbolKind.NamedType,
+        ["interface"] = SymbolKind.NamedType,
+        ["enum"] = SymbolKind.NamedType,
+        ["struct"] = SymbolKind.NamedType,
+        ["delegate"] = SymbolKind.NamedType,
+        ["type"] = SymbolKind.NamedType,
+    };
+
+    private static bool MatchesKind(ISymbol sym, string kind)
+    {
+        // Direct match on SymbolKind name (e.g. "Method", "NamedType", "Property")
+        if (sym.Kind.ToString().Equals(kind, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Alias match (e.g. "class" -> NamedType) with TypeKind refinement
+        if (KindAliases.TryGetValue(kind, out var mappedKind))
+        {
+            if (sym.Kind != mappedKind) return false;
+            if (sym is INamedTypeSymbol namedType)
+            {
+                return kind.Equals(namedType.TypeKind.ToString(), StringComparison.OrdinalIgnoreCase)
+                    || kind.Equals("type", StringComparison.OrdinalIgnoreCase);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
     public static async Task<List<FindResult>> FindAsync(
         Solution solution,
         string namePattern,
         string? kind = null,
-        string? projectName = null)
+        string? projectName = null,
+        int maxResults = 200)
     {
         var projects = projectName is not null
             ? solution.Projects.Where(p => p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
@@ -32,7 +64,7 @@ public static class SemanticSearchTools
 
             foreach (var sym in symbols)
             {
-                if (kind is not null && !sym.Kind.ToString().Equals(kind, StringComparison.OrdinalIgnoreCase))
+                if (kind is not null && !MatchesKind(sym, kind))
                     continue;
 
                 var loc = sym.Locations.FirstOrDefault(l => l.IsInSource);
@@ -46,6 +78,8 @@ public static class SemanticSearchTools
                     span.StartLinePosition.Line + 1,
                     sym.ContainingType?.ToDisplayString() ?? sym.ContainingNamespace?.ToString() ?? ""
                 ));
+
+                if (results.Count >= maxResults) return results;
             }
         }
 
@@ -58,9 +92,9 @@ public static class SemanticSearchTools
     public static async Task<List<FindResult>> GetWorkspaceSymbolsAsync(
         Solution solution,
         string query,
-        string? projectName = null)
+        string? projectName = null,
+        int maxResults = 200)
     {
-        // Reuse Find with the same pattern — SymbolFinder already does prefix/substring matching
-        return await FindAsync(solution, query, kind: null, projectName: projectName);
+        return await FindAsync(solution, query, kind: null, projectName: projectName, maxResults: maxResults);
     }
 }

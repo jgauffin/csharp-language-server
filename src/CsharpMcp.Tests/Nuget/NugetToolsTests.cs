@@ -32,26 +32,26 @@ public class NugetToolsTests : IDisposable
 
         var result = _tools.nuget_list_cached();
 
-        result.Count.ShouldBe(1);
-        result[0].Id.ShouldBe("mypkg");
-        result[0].Versions.Length.ShouldBe(2);
+        result.ShouldContain("mypkg");
+        result.ShouldContain("2.0.0");
+        result.ShouldContain("1.0.0");
     }
 
     [Fact]
-    public void PackageInfo_ReturnsMetadataOrErrorString()
+    public void PackageInfo_ReturnsErrorForMissing()
     {
         var result = _tools.nuget_package_info("nonexistent");
-        result.ShouldBeOfType<string>();
-        ((string)result).ShouldContain("not found");
+        result.ShouldContain("not found");
     }
 
     [Fact]
-    public void PackageInfo_WithValidPackage_ReturnsPackageInfo()
+    public void PackageInfo_WithValidPackage_ReturnsFormatted()
     {
         CreatePackageWithNuspec("testpkg", "1.0.0");
 
         var result = _tools.nuget_package_info("testpkg");
-        result.ShouldBeOfType<PackageInfo>();
+        result.ShouldContain("Package: testpkg 1.0.0");
+        result.ShouldContain("Description: Test");
     }
 
     [Fact]
@@ -62,17 +62,16 @@ public class NugetToolsTests : IDisposable
 
         var result = await _tools.nuget_search("serilog");
 
-        result.ShouldBeOfType<List<SearchResult>>();
-        var list = (List<SearchResult>)result;
-        list.Count.ShouldBe(2);
-        list.ShouldAllBe(r => r.FromCache);
+        result.ShouldContain("serilog");
+        result.ShouldContain("serilog.sinks.console");
+        result.ShouldContain("[cached]");
     }
 
     [Fact]
     public void AssemblyTypes_NonExistentPackage_ReturnsEmpty()
     {
         var result = _tools.nuget_assembly_types("nonexistent");
-        result.ShouldBeEmpty();
+        result.ShouldBe("No assemblies found.");
     }
 
     [Fact]
@@ -92,8 +91,8 @@ public class NugetToolsTests : IDisposable
 
         var result = _tools.nuget_assembly_docs("docpkg");
 
-        result.Count.ShouldBe(1);
-        result[0].Summary.ShouldBe("A foo.");
+        result.ShouldContain("T:DocPkg.Foo");
+        result.ShouldContain("A foo.");
     }
 
     [Fact]
@@ -114,8 +113,8 @@ public class NugetToolsTests : IDisposable
 
         var result = _tools.nuget_assembly_docs("docpkg", type: "Bar");
 
-        result.Count.ShouldBe(1);
-        result[0].MemberId.ShouldContain("Bar");
+        result.ShouldContain("Bar");
+        result.ShouldNotContain("Foo");
     }
 
     string CreatePackage(string id, string version)

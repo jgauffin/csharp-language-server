@@ -68,12 +68,10 @@ public static class CodeActionTools
         Solution solution,
         string filePath,
         int? line = null,
-        int? column = null)
+        int? column = null,
+        int maxResults = 50)
     {
-        var docId = solution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault()
-            ?? throw new ArgumentException($"File not found: {filePath}");
-
-        var doc = solution.GetDocument(docId)!;
+        var doc = PositionHelper.ResolveDocument(solution, filePath);
         var model = await doc.GetSemanticModelAsync();
         if (model is null) return [];
 
@@ -182,6 +180,8 @@ public static class CodeActionTools
                             diagnostic.Id,
                             diagnostic.GetMessage(),
                             changes));
+
+                        if (results.Count >= maxResults) return results;
                     }
                 }
             }

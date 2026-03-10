@@ -18,10 +18,22 @@
 	  <PackageReference Include="Microsoft.CodeAnalysis.Features" Version="5.0.0" />
 	  <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
 	  <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.0" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="1.0.2" />
     <PackageReference Include="NuGet.Packaging" Version="6.11.1" />
     <PackageReference Include="NuGet.Protocol" Version="6.11.1" />
     <PackageReference Include="System.Reflection.Metadata" Version="8.0.1" />
 
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="ArchiMetrics.Analysis">
+      <HintPath>..\..\lib\ArchiMetrics.Analysis.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\models\unixcoder\*" CopyToOutputDirectory="PreserveNewest" LinkBase="models\unixcoder" />
   </ItemGroup>
 
 </Project>

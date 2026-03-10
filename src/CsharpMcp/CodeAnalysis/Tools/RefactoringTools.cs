@@ -59,10 +59,7 @@ public static class RefactoringTools
 
     public static async Task<string> FormatDocumentAsync(Solution solution, string filePath)
     {
-        var docId = solution.GetDocumentIdsWithFilePath(filePath).FirstOrDefault()
-            ?? throw new ArgumentException($"File not found: {filePath}");
-
-        var doc = solution.GetDocument(docId)!;
+        var doc = PositionHelper.ResolveDocument(solution, filePath);
         var formatted = await Formatter.FormatAsync(doc);
         var text = await formatted.GetTextAsync();
         return text.ToString();

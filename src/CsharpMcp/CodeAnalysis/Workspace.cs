@@ -3,6 +3,8 @@ using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CsharpMcp.CodeAnalysis;
 
@@ -17,7 +19,9 @@ public sealed class RoslynWorkspace : IDisposable
     private readonly FileSystemWatcher _watcher;
     private readonly ConcurrentQueue<FileChange> _pendingChanges = new();
     private readonly Lock _lock = new();
+    private readonly ILogger<RoslynWorkspace> _logger;
     private Solution _currentSolution;
+    private volatile bool _fullResyncNeeded;
 
     // projectName (no extension) -> Project
     private readonly Dictionary<string, Project> _projects = new(StringComparer.OrdinalIgnoreCase);
@@ -31,14 +35,20 @@ public sealed class RoslynWorkspace : IDisposable
             MSBuildLocator.RegisterDefaults();
     }
 
-    private RoslynWorkspace(MSBuildWorkspace workspace, string rootPath)
+    public string RootPath { get; }
+    public Workspace InnerWorkspace => _workspace;
+
+    private RoslynWorkspace(MSBuildWorkspace workspace, string rootPath, ILogger<RoslynWorkspace> logger)
     {
+        RootPath = rootPath;
         _workspace = workspace;
+        _logger = logger;
         _currentSolution = workspace.CurrentSolution;
         _watcher = new FileSystemWatcher(rootPath, "*.cs")
         {
             IncludeSubdirectories = true,
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+            InternalBufferSize = 65536,
             EnableRaisingEvents = true
         };
         _watcher.Changed += (_, e) => _pendingChanges.Enqueue(new(Path.GetFullPath(e.FullPath), ChangeKind.Updated));
@@ -46,6 +56,11 @@ public sealed class RoslynWorkspace : IDisposable
         _watcher.Deleted += (_, e) => _pendingChanges.Enqueue(new(Path.GetFullPath(e.FullPath), ChangeKind.Deleted));
         _watcher.Renamed += (_, e) => _pendingChanges.Enqueue(
             new(Path.GetFullPath(e.FullPath), ChangeKind.Renamed, Path.GetFullPath(e.OldFullPath)));
+        _watcher.Error += (_, e) =>
+        {
+            _logger.LogWarning(e.GetException(), "FileSystemWatcher buffer overflow — scheduling full resync");
+            _fullResyncNeeded = true;
+        };
     }
 
     /// <summary>
@@ -54,23 +69,42 @@ public sealed class RoslynWorkspace : IDisposable
     /// </summary>
     private void ApplyPendingChanges()
     {
-        if (_pendingChanges.IsEmpty) return;
+        if (_pendingChanges.IsEmpty && !_fullResyncNeeded) return;
 
         lock (_lock)
         {
+            if (_fullResyncNeeded)
+            {
+                _fullResyncNeeded = false;
+                // Drain stale queue
+                while (_pendingChanges.TryDequeue(out _)) { }
+                FullResync();
+                return;
+            }
+
             if (_pendingChanges.IsEmpty) return;
 
             var changes = new List<FileChange>();
             while (_pendingChanges.TryDequeue(out var change))
                 changes.Add(change);
 
-            var solution = _currentSolution;
-            var processed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            _logger.LogDebug("Applying {Count} pending file changes", changes.Count);
 
+            // Deduplicate: keep the LAST change per file path so we don't
+            // process a stale Update when a later Delete was the final state.
+            var lastChange = new Dictionary<string, FileChange>(StringComparer.OrdinalIgnoreCase);
             foreach (var change in changes)
             {
-                if (!processed.Add(change.FullPath)) continue;
+                lastChange[change.FullPath] = change;
+                // For renames, also process the removal of the old path
+                if (change.Kind == ChangeKind.Renamed && change.OldFullPath is not null)
+                    lastChange[change.OldFullPath] = new(change.OldFullPath, ChangeKind.Deleted);
+            }
 
+            var solution = _currentSolution;
+
+            foreach (var change in lastChange.Values)
+            {
                 switch (change.Kind)
                 {
                     case ChangeKind.Deleted:
@@ -82,13 +116,7 @@ public sealed class RoslynWorkspace : IDisposable
                     }
                     case ChangeKind.Renamed:
                     {
-                        // Remove old path, then fall through to add/update new path
-                        if (change.OldFullPath is not null)
-                        {
-                            var oldDocId = solution.GetDocumentIdsWithFilePath(change.OldFullPath).FirstOrDefault();
-                            if (oldDocId is not null)
-                                solution = solution.RemoveDocument(oldDocId);
-                        }
+                        // Old path already handled as a Deleted entry above
                         solution = AddOrUpdateDocument(solution, change.FullPath);
                         break;
                     }
@@ -101,6 +129,45 @@ public sealed class RoslynWorkspace : IDisposable
 
             _currentSolution = solution;
         }
+    }
+
+    /// <summary>
+    /// Re-reads all .cs files from disk and reconciles with the current solution.
+    /// Called when FileSystemWatcher reports a buffer overflow.
+    /// </summary>
+    private void FullResync()
+    {
+        _logger.LogInformation("Performing full resync of all .cs files");
+
+        var solution = _currentSolution;
+
+        // Collect all .cs files currently on disk
+        var diskFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.GetFiles(RootPath, "*.cs", SearchOption.AllDirectories))
+        {
+            var fullPath = Path.GetFullPath(file);
+            if (IsBuildOutputPath(fullPath)) continue;
+            diskFiles.Add(fullPath);
+        }
+
+        // Remove documents that no longer exist on disk
+        foreach (var project in solution.Projects)
+        {
+            foreach (var doc in project.Documents)
+            {
+                if (doc.FilePath is not null && !diskFiles.Contains(doc.FilePath))
+                    solution = solution.RemoveDocument(doc.Id);
+            }
+        }
+
+        // Add or update documents that exist on disk
+        foreach (var filePath in diskFiles)
+        {
+            solution = AddOrUpdateDocument(solution, filePath);
+        }
+
+        _currentSolution = solution;
+        _logger.LogInformation("Full resync complete");
     }
 
     private Solution AddOrUpdateDocument(Solution solution, string filePath)
@@ -149,12 +216,18 @@ public sealed class RoslynWorkspace : IDisposable
         return best;
     }
 
-    public static async Task<RoslynWorkspace> LoadAsync(string rootPath)
+    public static async Task<RoslynWorkspace> LoadAsync(string rootPath, ILoggerFactory? loggerFactory = null, Func<string, bool>? projectFilter = null)
     {
+        var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RoslynWorkspace>();
         var workspace = MSBuildWorkspace.Create();
-        var instance = new RoslynWorkspace(workspace, rootPath);
+        var instance = new RoslynWorkspace(workspace, rootPath, logger);
 
-        var csprojFiles = Directory.GetFiles(rootPath, "*.csproj", SearchOption.AllDirectories);
+        var filter = projectFilter ?? (p => !IsBuildOutputPath(p));
+        var csprojFiles = Directory.GetFiles(rootPath, "*.csproj", SearchOption.AllDirectories)
+            .Where(filter)
+            .ToArray();
+        logger.LogInformation("Found {Count} .csproj files under {RootPath}", csprojFiles.Length, rootPath);
+
         foreach (var path in csprojFiles)
         {
             var fullPath = Path.GetFullPath(path);
@@ -166,10 +239,14 @@ public sealed class RoslynWorkspace : IDisposable
             {
                 project = workspace.CurrentSolution.Projects
                     .First(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+                logger.LogDebug("Project already loaded: {ProjectPath}", fullPath);
             }
             else
             {
+                logger.LogInformation("Loading project: {ProjectPath}", fullPath);
                 project = await workspace.OpenProjectAsync(path);
+                logger.LogInformation("Loaded project {ProjectName} with {DocCount} documents",
+                    project.Name, project.Documents.Count());
             }
 
             var name = Path.GetFileNameWithoutExtension(path);
@@ -178,6 +255,13 @@ public sealed class RoslynWorkspace : IDisposable
 
         // Sync our snapshot with the fully-loaded workspace solution
         instance._currentSolution = workspace.CurrentSolution;
+
+        foreach (var diag in workspace.Diagnostics)
+        {
+            logger.LogWarning("MSBuild: {Message}", diag.Message);
+        }
+
+        logger.LogInformation("Workspace ready: {ProjectCount} projects loaded", instance._projects.Count);
         return instance;
     }
 
@@ -217,6 +301,12 @@ public sealed class RoslynWorkspace : IDisposable
             _currentSolution = _workspace.CurrentSolution;
             return result;
         }
+    }
+
+    private static bool IsBuildOutputPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        return normalized.Contains("/bin/") || normalized.Contains("/obj/");
     }
 
     public void Dispose()

@@ -158,11 +158,52 @@ The server discovers all `.csproj` files under the root path and loads them into
 | | `get_code_actions` | Quick fixes for diagnostics (add using, implement interface, etc.) |
 | **Efficiency** | `analyze_position` | Combined hover + diagnostics + symbols in one call |
 | | `batch_analyze` | Analyze multiple positions at once |
+| **Quality** | `quality_snapshot` | Capture baseline metrics + diagnostics for later comparison |
+| | `quality_report` | Compare current quality against snapshot, or report git-changed files |
+| **Code Metrics** | `calculate_metrics` | Worst types by maintainability index |
+| | `get_worst_namespaces` | Namespace-level maintainability ranking |
+| | `get_namespace_types` | Drill into a specific namespace |
+| | `detect_duplication` | Find exact, renamed, and semantic code clones |
+| | `generate_workspace_summary` | High-level workspace health overview |
 | **NuGet** | `nuget_search` | Cache-first search, falls back to remote |
 | | `nuget_list_cached` | List all locally cached packages and versions |
 | | `nuget_package_info` | Metadata, dependencies, file listing for a cached package |
 | | `nuget_assembly_types` | Public type/member definitions from assemblies (no docs) |
 | | `nuget_assembly_docs` | XML documentation, filterable by type |
+
+## Quality Tracking
+
+The `quality_snapshot` and `quality_report` tools let you measure code quality impact during a coding session.
+
+**Workflow:**
+1. Call `quality_snapshot` at the start of a session — captures maintainability index, cyclomatic complexity, LOC, coupling, and diagnostic counts for all types
+2. Make your changes
+3. Call `quality_report` — shows per-type deltas, categorized as improved/degraded/new/removed
+
+If no snapshot exists, `quality_report` falls back to identifying git-changed `.cs` files and reporting diagnostics and workspace-wide metrics.
+
+## Configuring CLAUDE.md
+
+To get the most out of this server, add these instructions to your project's `CLAUDE.md` file:
+
+```markdown
+## C# Code Intelligence
+
+Always prefer csharp MCP tools over grep/bash/find for C# code:
+- Use `get_definition` instead of grepping for class/method definitions
+- Use `get_references` instead of grepping for usages
+- Use `find` or `get_workspace_symbols` instead of find/grep for locating symbols
+- Use `get_diagnostics` / `get_all_diagnostics` instead of running `dotnet build` to check errors
+- Use `get_outline` instead of reading entire files to understand structure
+- Use `get_hover` to check types instead of guessing from context
+
+## Code Quality Tracking
+- At the START of each coding session, call `quality_snapshot` to capture a baseline
+- At the END of each session (before committing), call `quality_report` to review quality impact
+- If quality_report shows degraded types, address them before finishing
+```
+
+> **Why is this needed?** AI agents default to familiar tools like `grep`, `find`, and `cat`. Without explicit instructions, they will ignore the MCP tools even when they're available — wasting tokens reading entire files and producing less accurate results. The `CLAUDE.md` instructions override this default behavior.
 
 ## Build
 

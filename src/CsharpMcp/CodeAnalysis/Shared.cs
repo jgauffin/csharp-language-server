@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Text;
 
@@ -11,6 +12,60 @@ public record SymbolInfo(string Name, string Kind, string ContainingType, string
 
 public static class PositionHelper
 {
+    /// <summary>
+    /// Normalizes a file path for Roslyn lookup (full path, canonical form).
+    /// </summary>
+    public static string NormalizePath(string filePath) => Path.GetFullPath(filePath);
+
+    /// <summary>
+    /// Resolves a document by file path, with path normalization.
+    /// Throws ArgumentException with helpful message if not found.
+    /// </summary>
+    public static Document ResolveDocument(Solution solution, string filePath)
+    {
+        var normalized = NormalizePath(filePath);
+        var docIds = solution.GetDocumentIdsWithFilePath(normalized);
+
+        // Fall back to scanning all documents with case-insensitive comparison
+        // to handle path normalization mismatches.
+        if (docIds.IsEmpty)
+            docIds = FindDocumentIdsCaseInsensitive(solution, normalized);
+
+        return docIds
+            .Select(id => solution.GetDocument(id))
+            .FirstOrDefault(d => d is not null)
+            ?? throw new ArgumentException(
+                $"File not found in workspace: {filePath}. " +
+                $"Loaded projects: {string.Join(", ", solution.Projects.Select(p => p.Name))}");
+    }
+
+    /// <summary>
+    /// Resolves a document ID by file path, with path normalization.
+    /// </summary>
+    public static DocumentId ResolveDocumentId(Solution solution, string filePath)
+    {
+        var normalized = NormalizePath(filePath);
+        var docId = solution.GetDocumentIdsWithFilePath(normalized).FirstOrDefault()
+            ?? FindDocumentIdsCaseInsensitive(solution, normalized).FirstOrDefault();
+        return docId
+            ?? throw new ArgumentException(
+                $"File not found in workspace: {filePath}. " +
+                $"Loaded projects: {string.Join(", ", solution.Projects.Select(p => p.Name))}");
+    }
+
+    private static ImmutableArray<DocumentId> FindDocumentIdsCaseInsensitive(Solution solution, string filePath)
+    {
+        foreach (var project in solution.Projects)
+        {
+            foreach (var doc in project.Documents)
+            {
+                if (string.Equals(doc.FilePath, filePath, StringComparison.OrdinalIgnoreCase))
+                    return [doc.Id];
+            }
+        }
+        return [];
+    }
+
     /// <summary>
     /// Converts 1-indexed line/column to a Roslyn TextSpan offset within the document's SourceText.
     /// </summary>
@@ -32,10 +87,7 @@ public static class PositionHelper
     public static async Task<(Document doc, int offset)> ResolveAsync(
         Solution solution, Position pos)
     {
-        var doc = solution.GetDocumentIdsWithFilePath(pos.FilePath)
-            .Select(id => solution.GetDocument(id))
-            .FirstOrDefault(d => d is not null)
-            ?? throw new ArgumentException($"File not found in solution: {pos.FilePath}");
+        var doc = ResolveDocument(solution, pos.FilePath);
 
         var text = await doc.GetTextAsync();
         var offset = ToOffset(text, pos.Line, pos.Column);

@@ -24,7 +24,7 @@ public static class CacheReader
             .ToList();
     }
 
-    public static PackageInfo? GetPackageInfo(string id, string? version)
+    public static PackageInfo? GetPackageInfo(string id, string? version, string? fileFilter = null)
     {
         var versionDir = ResolveVersionDir(id, version);
         if (versionDir == null) return null;
@@ -41,10 +41,24 @@ public static class CacheReader
             g.Packages.Select(p => new Dependency(p.Id, p.VersionRange?.ToString())).ToArray()
         )).ToArray();
 
-        var files = versionDir.GetFiles("*", SearchOption.AllDirectories)
-            .Select(f => Path.GetRelativePath(versionDir.FullName, f.FullName))
-            .OrderBy(f => f)
-            .ToArray();
+        var allFiles = versionDir.GetFiles("*", SearchOption.AllDirectories)
+            .Select(f => Path.GetRelativePath(versionDir.FullName, f.FullName));
+
+        if (fileFilter != null)
+        {
+            // Convert glob pattern to regex: * matches anything except path separators, ** matches everything
+            var escaped = System.Text.RegularExpressions.Regex.Escape(fileFilter.Replace('\\', '/'));
+            var regexPattern = "^" + escaped
+                .Replace(@"\*\*", "§DOUBLESTAR§")
+                .Replace(@"\*", @"[^/]*")
+                .Replace(@"\?", @"[^/]")
+                .Replace("§DOUBLESTAR§", ".*")
+                + "$";
+            var regex = new System.Text.RegularExpressions.Regex(regexPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            allFiles = allFiles.Where(f => regex.IsMatch(f.Replace('\\', '/')));
+        }
+
+        var files = allFiles.OrderBy(f => f).ToArray();
 
         meta.TryGetValue("description", out var desc);
         meta.TryGetValue("authors", out var authors);
@@ -59,7 +73,26 @@ public static class CacheReader
         );
     }
 
-    public static List<AssemblyInfo> GetAssemblyTypes(string id, string? version, string? assemblyFilter)
+    public record AssemblyEntry(string Name, string RelativePath, string TargetFramework);
+
+    public static List<AssemblyEntry> ListAssemblies(string id, string? version)
+    {
+        var versionDir = ResolveVersionDir(id, version);
+        if (versionDir == null) return [];
+
+        return versionDir.GetFiles("*.dll", SearchOption.AllDirectories)
+            .Select(f =>
+            {
+                var rel = Path.GetRelativePath(versionDir.FullName, f.FullName);
+                var parts = rel.Split(Path.DirectorySeparatorChar);
+                var tfm = parts.Length >= 2 ? parts[^2] : "unknown";
+                return new AssemblyEntry(f.Name, rel, tfm);
+            })
+            .OrderBy(a => a.Name)
+            .ToList();
+    }
+
+    public static List<AssemblyInfo> GetAssemblyTypes(string id, string? version, string? assemblyFilter, string? typeFilter = null)
     {
         var versionDir = ResolveVersionDir(id, version);
         if (versionDir == null) return [];
@@ -70,9 +103,23 @@ public static class CacheReader
                 || f.Name.Equals(assemblyFilter + ".dll", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        return dlls.Select(dll => ReadAssemblyTypes(dll, versionDir.FullName))
+        var assemblies = dlls.Select(dll => ReadAssemblyTypes(dll, versionDir.FullName))
             .OfType<AssemblyInfo>()
             .ToList();
+
+        if (typeFilter != null)
+        {
+            assemblies = assemblies
+                .Select(a => a with {
+                    Types = a.Types
+                        .Where(t => t.Name.Contains(typeFilter, StringComparison.OrdinalIgnoreCase))
+                        .ToArray()
+                })
+                .Where(a => a.Types.Length > 0)
+                .ToList();
+        }
+
+        return assemblies;
     }
 
     public static List<DocEntry> GetAssemblyDocs(string id, string? version, string? assemblyFilter, string? typeFilter)

@@ -7,7 +7,7 @@ namespace CsharpMcp.Nuget;
 public class NugetTools
 {
     [McpServerTool, Description("Search for NuGet packages. Checks local cache first, falls back to remote source.")]
-    public async Task<object> nuget_search(
+    public async Task<string> nuget_search(
         string query,
         [Description("NuGet source URL (optional, overrides NUGET_SOURCE env)")] string? source = null,
         [Description("Max results to return")] int take = 20)
@@ -19,34 +19,44 @@ public class NugetTools
             .ToList();
 
         if (cached.Count > 0)
-            return cached;
+            return NugetFormatter.Format(cached);
 
-        return await RemoteClient.SearchAsync(query, source, take);
+        return NugetFormatter.Format(await RemoteClient.SearchAsync(query, source, take));
     }
 
     [McpServerTool, Description("List all packages present in the local NuGet cache with their available versions.")]
-    public List<PackageSummary> nuget_list_cached() =>
-        CacheReader.ListCached();
+    public string nuget_list_cached() =>
+        NugetFormatter.Format(CacheReader.ListCached());
 
     [McpServerTool, Description("Get metadata, dependencies, and file listing for a cached package.")]
-    public object nuget_package_info(
+    public string nuget_package_info(
         string id,
-        [Description("Package version (optional, latest cached if omitted)")] string? version = null) =>
-        CacheReader.GetPackageInfo(id, version)
-        ?? (object)$"Package '{id}' not found in cache";
+        [Description("Package version (optional, latest cached if omitted)")] string? version = null,
+        [Description("Glob-style filter for file listing e.g. '*.dll', 'lib/**/*.xml' (optional, all files if omitted)")] string? fileFilter = null)
+    {
+        var info = CacheReader.GetPackageInfo(id, version, fileFilter);
+        return info != null ? NugetFormatter.Format(info) : $"Package '{id}' not found in cache";
+    }
 
-    [McpServerTool, Description("Get public type and member definitions from assemblies in a cached package. Does not include documentation.")]
-    public List<AssemblyInfo> nuget_assembly_types(
+    [McpServerTool, Description("List assembly names and target frameworks in a cached package. Use this before nuget_assembly_types to find the right assembly name.")]
+    public string nuget_list_assemblies(
+        string id,
+        [Description("Package version (optional)")] string? version = null) =>
+        NugetFormatter.FormatAssemblyList(CacheReader.ListAssemblies(id, version));
+
+    [McpServerTool, Description("Get public type and member definitions from assemblies in a cached package. Does not include documentation. Use type filter to reduce output for large packages.")]
+    public string nuget_assembly_types(
         string id,
         [Description("Package version (optional)")] string? version = null,
-        [Description("Assembly filename filter e.g. MyLib.dll (optional, all assemblies if omitted)")] string? assembly = null) =>
-        CacheReader.GetAssemblyTypes(id, version, assembly);
+        [Description("Assembly filename filter e.g. MyLib.dll (optional, all assemblies if omitted)")] string? assembly = null,
+        [Description("Type name filter - only return types whose name contains this string (optional)")] string? type = null) =>
+        NugetFormatter.Format(CacheReader.GetAssemblyTypes(id, version, assembly, type));
 
     [McpServerTool, Description("Get XML documentation for types in a cached package assembly. Use the type filter to reduce token count.")]
-    public List<DocEntry> nuget_assembly_docs(
+    public string nuget_assembly_docs(
         string id,
         [Description("Package version (optional)")] string? version = null,
         [Description("Assembly/XML filename filter e.g. MyLib (optional)")] string? assembly = null,
         [Description("Type name filter - only return docs for members containing this string (optional)")] string? type = null) =>
-        CacheReader.GetAssemblyDocs(id, version, assembly, type);
+        NugetFormatter.Format(CacheReader.GetAssemblyDocs(id, version, assembly, type));
 }

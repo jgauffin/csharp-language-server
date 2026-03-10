@@ -19,7 +19,7 @@ public class DiagnosticsToolsTests : WorkspaceFixture
     {
         var diags = await DiagnosticsTools.GetAllDiagnosticsAsync(Workspace.Solution);
 
-        diags.ShouldNotContain(d => d.Severity == "Error");
+        diags.Items.ShouldNotContain(d => d.Severity == "Error");
     }
 
     [Fact]
@@ -29,6 +29,6 @@ public class DiagnosticsToolsTests : WorkspaceFixture
             Workspace.Solution, projectName: "LibA");
 
         // All diagnostics should come from LibA files
-        diags.ShouldAllBe(d => d.FilePath.Contains("LibA"));
+        diags.Items.ShouldAllBe(d => d.FilePath.Contains("LibA"));
     }
 }

@@ -23,7 +23,7 @@ public static class NavigationTools
 
     public record ReferenceResult(Location Location, bool IsWrite);
 
-    public static async Task<List<ReferenceResult>> GetReferencesAsync(Solution solution, Position pos)
+    public static async Task<List<ReferenceResult>> GetReferencesAsync(Solution solution, Position pos, int maxResults = 200)
     {
         var (doc, offset) = await PositionHelper.ResolveAsync(solution, pos);
         var symbol = await SymbolFinder.FindSymbolAtPositionAsync(doc, offset);
@@ -40,6 +40,8 @@ public static class NavigationTools
                 PositionHelper.ToLocation(span),
                 false
             ));
+
+            if (results.Count >= maxResults) return results;
         }
 
         return results;
@@ -53,28 +55,21 @@ public static class NavigationTools
 
         var impls = (await SymbolFinder.FindImplementationsAsync(symbol, solution)).ToList();
 
-        // For interface/abstract members, also search for overrides transitively
-        if (symbol is IMethodSymbol method && impls.Count == 0)
+        // Expand any abstract results to their concrete overrides
+        var expanded = new List<ISymbol>();
+        foreach (var impl in impls)
         {
-            // Find implementations via containing type hierarchy
-            var containingType = method.ContainingType;
-            if (containingType is not null)
+            if (impl is IMethodSymbol { IsAbstract: true } abstractMethod)
             {
-                var typeImpls = containingType.TypeKind == TypeKind.Interface
-                    ? await SymbolFinder.FindImplementationsAsync(containingType, solution)
-                    : [.. (await SymbolFinder.FindDerivedClassesAsync(containingType, solution))];
-
-                foreach (var typeImpl in typeImpls.OfType<INamedTypeSymbol>())
-                {
-                    var implMember = typeImpl.FindImplementationForInterfaceMember(method)
-                        ?? typeImpl.GetMembers(method.Name)
-                            .OfType<IMethodSymbol>()
-                            .FirstOrDefault(m => m.IsOverride);
-                    if (implMember is not null)
-                        impls.Add(implMember);
-                }
+                var overrides = await SymbolFinder.FindOverridesAsync(abstractMethod, solution);
+                expanded.AddRange(overrides);
+            }
+            else
+            {
+                expanded.Add(impl);
             }
         }
+        impls = expanded;
 
         return impls
             .SelectMany(s => s.Locations.Where(l => l.IsInSource))

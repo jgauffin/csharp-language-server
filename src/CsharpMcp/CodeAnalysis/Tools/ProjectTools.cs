@@ -7,7 +7,7 @@ public static class ProjectTools
     public record ProjectFileEntry(string FilePath, string ProjectName);
 
     public static List<ProjectFileEntry> GetProjectFiles(
-        Solution solution, string? projectName = null, string? filePattern = null)
+        Solution solution, string? projectName = null, string? filePattern = null, int maxResults = 500)
     {
         var projects = projectName is not null
             ? solution.Projects.Where(p => p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
@@ -30,6 +30,6 @@ public static class ProjectTools
             }
         }
 
-        return results.OrderBy(f => f.ProjectName).ThenBy(f => f.FilePath).ToList();
+        return results.OrderBy(f => f.ProjectName).ThenBy(f => f.FilePath).Take(maxResults).ToList();
     }
 }

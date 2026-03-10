@@ -27,6 +27,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="ArchiMetrics.Analysis">
+      <HintPath>..\..\lib\ArchiMetrics.Analysis.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Remove="TestFixtures/**" />
     <None Include="TestFixtures/**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

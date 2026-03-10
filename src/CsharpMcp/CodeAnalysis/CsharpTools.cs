@@ -1,109 +1,236 @@
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using ArchiMetrics.Analysis;
 using CsharpMcp.CodeAnalysis.Tools;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 
 namespace CsharpMcp.CodeAnalysis;
 
 [McpServerToolType]
-public class CsharpTools(RoslynWorkspace workspace)
+public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILogger<CsharpTools> logger)
 {
     [McpServerTool, Description("Jump from a symbol usage to its declaration.")]
-    public Task<Location?> get_definition(string filePath, int line, int column) =>
-        NavigationTools.GetDefinitionAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_definition(string filePath, int line, int column) =>
+        Safe(
+            () => NavigationTools.GetDefinitionAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
-    [McpServerTool, Description("Find all usages of a symbol with read/write classification.")]
-    public Task<List<NavigationTools.ReferenceResult>> get_references(string filePath, int line, int column) =>
-        NavigationTools.GetReferencesAsync(workspace.Solution, new Position(filePath, line, column));
+    [McpServerTool, Description("Find all usages of a symbol with read/write classification. Use maxResults to limit output.")]
+    public Task<string> get_references(string filePath, int line, int column, int maxResults = 200) =>
+        Safe(
+            () => NavigationTools.GetReferencesAsync(workspace.Solution, new Position(filePath, line, column), maxResults),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Find concrete implementations of an interface member or abstract method.")]
-    public Task<List<Location>> get_implementations(string filePath, int line, int column) =>
-        NavigationTools.GetImplementationsAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_implementations(string filePath, int line, int column) =>
+        Safe(
+            () => NavigationTools.GetImplementationsAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.FormatLocations);
 
     [McpServerTool, Description("Trace callers and callees of a method.")]
-    public Task<List<NavigationTools.CallInfo>> get_call_hierarchy(string filePath, int line, int column) =>
-        NavigationTools.GetCallHierarchyAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_call_hierarchy(string filePath, int line, int column) =>
+        Safe(
+            () => NavigationTools.GetCallHierarchyAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Navigate base types, interfaces, and derived types.")]
-    public Task<NavigationTools.TypeHierarchyResult?> get_type_hierarchy(string filePath, int line, int column) =>
-        NavigationTools.GetTypeHierarchyAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_type_hierarchy(string filePath, int line, int column) =>
+        Safe(
+            () => NavigationTools.GetTypeHierarchyAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Get type info and XML documentation at a position.")]
-    public Task<TypeIntelligenceTools.HoverResult?> get_hover(string filePath, int line, int column) =>
-        TypeIntelligenceTools.GetHoverAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_hover(string filePath, int line, int column) =>
+        Safe(
+            () => TypeIntelligenceTools.GetHoverAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Get function parameter signatures at a call site.")]
-    public Task<TypeIntelligenceTools.ParameterHelp?> get_signature(string filePath, int line, int column) =>
-        TypeIntelligenceTools.GetSignatureAsync(workspace.Solution, new Position(filePath, line, column));
+    public Task<string> get_signature(string filePath, int line, int column) =>
+        Safe(
+            () => TypeIntelligenceTools.GetSignatureAsync(workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Flat list of all symbols declared in a file.")]
-    public Task<List<CodeStructureTools.SymbolEntry>> get_symbols(string filePath) =>
-        CodeStructureTools.GetSymbolsAsync(workspace.Solution, filePath);
+    public Task<string> get_symbols(string filePath) =>
+        Safe(
+            () => CodeStructureTools.GetSymbolsAsync(workspace.Solution, filePath),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Hierarchical outline of types and members in a file.")]
-    public async Task<string> get_outline(string filePath) =>
-        CodeStructureTools.RenderOutline(await CodeStructureTools.GetOutlineAsync(workspace.Solution, filePath));
+    public Task<string> get_outline(string filePath) =>
+        Safe(
+            async () => CodeStructureTools.RenderOutline(await CodeStructureTools.GetOutlineAsync(workspace.Solution, filePath)),
+            s => s);
 
     [McpServerTool, Description("List all using directives in a file.")]
-    public Task<List<CodeStructureTools.ImportEntry>> get_imports(string filePath) =>
-        CodeStructureTools.GetImportsAsync(workspace.Solution, filePath);
+    public Task<string> get_imports(string filePath) =>
+        Safe(
+            () => CodeStructureTools.GetImportsAsync(workspace.Solution, filePath),
+            TextFormatter.Format);
 
-    [McpServerTool, Description("Search symbols by name pattern. Optionally filter by kind and project.")]
-    public Task<List<SemanticSearchTools.FindResult>> find(
-        string namePattern, string? kind = null, string? projectName = null) =>
-        SemanticSearchTools.FindAsync(workspace.Solution, namePattern, kind, projectName);
+    [McpServerTool, Description("Search symbols by name pattern. Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project. Use maxResults to limit output.")]
+    public Task<string> find(
+        string namePattern, string? kind = null, string? projectName = null, int maxResults = 200) =>
+        Safe(
+            () => SemanticSearchTools.FindAsync(workspace.Solution, namePattern, kind, projectName, maxResults),
+            TextFormatter.Format);
 
-    [McpServerTool, Description("Fast fuzzy symbol search across the workspace or a specific project.")]
-    public Task<List<SemanticSearchTools.FindResult>> get_workspace_symbols(
-        string query, string? projectName = null) =>
-        SemanticSearchTools.GetWorkspaceSymbolsAsync(workspace.Solution, query, projectName);
+    [McpServerTool, Description("Fast fuzzy symbol search across the workspace or a specific project. Use maxResults to limit output.")]
+    public Task<string> get_workspace_symbols(
+        string query, string? projectName = null, int maxResults = 200) =>
+        Safe(
+            () => SemanticSearchTools.GetWorkspaceSymbolsAsync(workspace.Solution, query, projectName, maxResults),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Get errors and warnings for a specific file.")]
-    public Task<List<DiagnosticsTools.DiagnosticEntry>> get_diagnostics(string filePath) =>
-        DiagnosticsTools.GetDiagnosticsAsync(workspace.Solution, filePath);
+    public Task<string> get_diagnostics(string filePath) =>
+        Safe(
+            () => DiagnosticsTools.GetDiagnosticsAsync(workspace.Solution, filePath),
+            TextFormatter.Format);
 
-    [McpServerTool, Description("Get errors and warnings for all projects, or a specific one.")]
-    public Task<List<DiagnosticsTools.DiagnosticEntry>> get_all_diagnostics(string? projectName = null) =>
-        DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName);
+    [McpServerTool, Description("Get errors and warnings for all projects, or a specific one. Default filters to Warning+Error only. Use minSeverity='info' or 'hidden' to include more. Use skip/take to page.")]
+    public Task<string> get_all_diagnostics(string? projectName = null, string? minSeverity = null, int skip = 0, int take = 100) =>
+        Safe(
+            () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Preview the impact of a rename without writing to disk.")]
-    public Task<RefactoringTools.RenamePreview> rename_preview(
+    public Task<string> rename_preview(
         string filePath, int line, int column, string newName) =>
-        RefactoringTools.RenamePreviewAsync(
-            workspace.Solution, new Position(filePath, line, column), newName);
+        Safe(
+            () => RefactoringTools.RenamePreviewAsync(
+                workspace.Solution, new Position(filePath, line, column), newName),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Rename a symbol across all projects and write changes to disk. Fails on compilation errors.")]
-    public Task<RefactoringTools.RenamePreview> rename_symbol(
+    public Task<string> rename_symbol(
         string filePath, int line, int column, string newName) =>
-        RefactoringTools.RenameSymbolAsync(
-            workspace, new Position(filePath, line, column), newName);
+        Safe(
+            () => RefactoringTools.RenameSymbolAsync(
+                workspace, new Position(filePath, line, column), newName),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Format a document using the Roslyn formatter.")]
     public Task<string> format_document(string filePath) =>
-        RefactoringTools.FormatDocumentAsync(workspace.Solution, filePath);
+        Safe(
+            () => RefactoringTools.FormatDocumentAsync(workspace.Solution, filePath),
+            s => s);
 
     [McpServerTool, Description("Combined hover, diagnostics, and symbol list for a position in one call.")]
-    public Task<EfficiencyTools.PositionAnalysis> analyze_position(
+    public Task<string> analyze_position(
         string filePath, int line, int column) =>
-        EfficiencyTools.AnalyzePositionAsync(
-            workspace.Solution, new Position(filePath, line, column));
+        Safe(
+            () => EfficiencyTools.AnalyzePositionAsync(
+                workspace.Solution, new Position(filePath, line, column)),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Analyze multiple positions in one call.")]
-    public Task<List<EfficiencyTools.PositionAnalysis>> batch_analyze(List<Position> positions) =>
-        EfficiencyTools.BatchAnalyzeAsync(workspace.Solution, positions);
+    public Task<string> batch_analyze(List<Position> positions) =>
+        Safe(
+            () => EfficiencyTools.BatchAnalyzeAsync(workspace.Solution, positions),
+            TextFormatter.Format);
 
     [McpServerTool, Description("Get code completions at a position. Returns available members, methods, types, keywords, etc.")]
-    public Task<List<CompletionTools.CompletionItem>> get_completions(
+    public Task<string> get_completions(
         string filePath, int line, int column, int maxResults = 50) =>
-        CompletionTools.GetCompletionsAsync(
-            workspace.Solution, new Position(filePath, line, column), maxResults);
+        Safe(
+            () => CompletionTools.GetCompletionsAsync(
+                workspace.Solution, new Position(filePath, line, column), maxResults),
+            TextFormatter.Format);
 
-    [McpServerTool, Description("List all source files in the workspace, optionally filtered by project name and/or file name pattern (substring match).")]
-    public List<ProjectTools.ProjectFileEntry> get_project_files(
-        string? projectName = null, string? filePattern = null) =>
-        ProjectTools.GetProjectFiles(workspace.Solution, projectName, filePattern);
+    [McpServerTool, Description("List all source files in the workspace, optionally filtered by project name and/or file name pattern (substring match). Use maxResults to limit output.")]
+    public Task<string> get_project_files(
+        string? projectName = null, string? filePattern = null, int maxResults = 500) =>
+        Task.FromResult(TextFormatter.Format(ProjectTools.GetProjectFiles(workspace.Solution, projectName, filePattern, maxResults)));
 
-    [McpServerTool, Description("Get code actions (quick fixes) for diagnostics in a file. Includes fixes like add using, implement interface, generate constructor, etc. Optionally filter to a specific position.")]
-    public Task<List<CodeActionTools.CodeActionEntry>> get_code_actions(
-        string filePath, int? line = null, int? column = null) =>
-        CodeActionTools.GetCodeActionsAsync(workspace.Solution, filePath, line, column);
+    [McpServerTool, Description("Get code actions (quick fixes) for diagnostics in a file. Includes fixes like add using, implement interface, generate constructor, etc. Optionally filter to a specific position. Use maxResults to limit output.")]
+    public Task<string> get_code_actions(
+        string filePath, int? line = null, int? column = null, int maxResults = 50) =>
+        Safe(
+            () => CodeActionTools.GetCodeActionsAsync(workspace.Solution, filePath, line, column, maxResults),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Get the worst types by maintainability index across all projects or a specific one. Returns a flat list of types with metrics (LOC, CC, coupling, etc.). Use skip/take to page.")]
+    public Task<string> calculate_metrics(string? projectName = null, int skip = 0, int take = 50) =>
+        Safe(
+            () => agent.GetWorstTypes(workspace.Solution, projectName: projectName, skip: skip, take: take),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Detect duplicated code (exact, renamed, and semantic clones) across all projects or a specific one. Results sorted by most instances. Use skip/take to page through results.")]
+    public Task<string> detect_duplication(
+        string? projectName = null, int minimumTokens = 50, double similarityThreshold = 0.85, int skip = 0, int take = 50) =>
+        Safe(
+            () => agent.DetectDuplication(workspace.Solution, projectName: projectName,
+                minimumTokens: minimumTokens, similarityThreshold: similarityThreshold, skip: skip, take: take),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Find methods that are hard to understand and need documentation or refactoring. Uses embedding similarity, cyclomatic complexity, nesting depth, and magic literal counts. Results sorted by worst opacity. Use skip/take to page through results. Requires --model-dir.")]
+    public Task<string> find_needs_docs_or_refactor(
+        string? projectName = null, int minimumTokens = 20, int skip = 0, int take = 50) =>
+        Safe(
+            () => agent.FindNeedsDocsOrRefactor(workspace.Solution, projectName: projectName, minimumTokens: minimumTokens, skip: skip, take: take),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Get the worst namespaces by maintainability index. Returns flat namespace summaries without type/member trees. Use get_namespace_types to drill into a specific namespace. Use skip/take to page.")]
+    public Task<string> get_worst_namespaces(string? projectName = null, int skip = 0, int take = 20) =>
+        Safe(
+            () => agent.GetWorstNamespaces(workspace.Solution, projectName: projectName, skip: skip, take: take),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Get types within a specific namespace, sorted by worst maintainability index. Use after get_worst_namespaces to drill into a flagged namespace. Use skip/take to page.")]
+    public Task<string> get_namespace_types(string namespaceName, string? projectName = null, int skip = 0, int take = 20) =>
+        Safe(
+            () => agent.GetNamespaceTypes(workspace.Solution, namespaceName, projectName: projectName, skip: skip, take: take),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Generate a high-level summary of the workspace including project metrics, dependencies, and health indicators.")]
+    public Task<string> generate_workspace_summary() =>
+        Safe(
+            () => agent.GenerateWorkspaceSummary(workspace.Solution),
+            s => s);
+
+    private QualitySnapshot? _snapshot;
+
+    [McpServerTool, Description("Capture a quality baseline snapshot (metrics + diagnostics). Use before making changes, then call quality_report to see the impact.")]
+    public Task<string> quality_snapshot() =>
+        Safe(async () =>
+        {
+            _snapshot = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+            return _snapshot;
+        }, TextFormatter.Format);
+
+    [McpServerTool, Description("Compare current code quality against stored snapshot. Shows metric deltas per type. If no snapshot, reports quality of git-changed files instead.")]
+    public Task<string> quality_report() =>
+        Safe<object>(async () =>
+        {
+            if (_snapshot is not null)
+            {
+                var current = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+                return QualityTools.CompareSnapshots(_snapshot, current);
+            }
+            return await QualityTools.BuildGitFallbackReportAsync(workspace.Solution, agent, workspace.RootPath);
+        }, obj => obj switch
+        {
+            QualityComparison c => TextFormatter.Format(c),
+            GitFallbackReport g => TextFormatter.Format(g),
+            _ => obj.ToString()!
+        });
+
+    private async Task<string> Safe<T>(Func<Task<T>> action, Func<T, string> format, [CallerMemberName] string tool = "")
+    {
+        logger.LogInformation("Tool {Tool} invoked", tool);
+        try
+        {
+            var result = await action();
+            logger.LogInformation("Tool {Tool} completed successfully", tool);
+            return format(result!);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Tool {Tool} failed", tool);
+            return $"Error: {ex.GetType().Name}: {ex.Message}";
+        }
+    }
 }

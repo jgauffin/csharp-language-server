@@ -24,7 +24,7 @@ public abstract class WorkspaceFixture : IAsyncLifetime
 
     public virtual async Task InitializeAsync()
     {
-        Workspace = await RoslynWorkspace.LoadAsync(FixturePath);
+        Workspace = await RoslynWorkspace.LoadAsync(FixturePath, projectFilter: _ => true);
     }
 
     public virtual Task DisposeAsync()

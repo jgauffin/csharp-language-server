@@ -110,8 +110,5 @@ public static class CodeStructureTools
         FileScopedNamespaceDeclarationSyntax;
 
     private static Document ResolveDocument(Solution solution, string filePath) =>
-        solution.GetDocumentIdsWithFilePath(filePath)
-            .Select(id => solution.GetDocument(id))
-            .FirstOrDefault(d => d is not null)
-            ?? throw new ArgumentException($"File not found in solution: {filePath}");
+        PositionHelper.ResolveDocument(solution, filePath);
 }
