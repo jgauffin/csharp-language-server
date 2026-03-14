@@ -37,7 +37,7 @@ public static class DiagnosticsTools
         int take = 100)
     {
         var projects = projectName is not null
-            ? solution.Projects.Where(p => p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+            ? solution.Projects.Where(p => ProjectTools.MatchesPattern(p.Name, projectName))
             : solution.Projects;
 
         var sevFilter = ParseMinSeverity(minSeverity);

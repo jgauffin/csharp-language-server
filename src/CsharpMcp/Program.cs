@@ -24,6 +24,7 @@ builder.Services
     .AddSingleton(config)
     .AddSingleton(workspace)
     .AddSingleton(agent)
+    .AddSingleton<CsharpTools>()
     .AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation { Name = config.Name, Version = "1.0.0" };
@@ -34,6 +35,7 @@ builder.Services
     })
     .WithStdioServerTransport()
     .WithTools<CsharpTools>()
+    .WithTools<FileTools>()
     .WithTools<CsharpMcp.Nuget.NugetTools>();
 
 await builder.Build().RunAsync();

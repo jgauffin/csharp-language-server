@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using ArchiMetrics.Analysis;
 using Microsoft.CodeAnalysis;
 
@@ -33,18 +32,13 @@ public record QualityComparison(
     List<TypeMetricEntry> NewTypes,
     List<TypeMetricEntry> RemovedTypes);
 
-public record GitFallbackReport(
-    List<string> ChangedFiles,
-    List<DiagnosticsTools.DiagnosticEntry> Diagnostics,
-    List<TypeMetricEntry> TypeMetrics);
-
 public static class QualityTools
 {
     public static async Task<QualitySnapshot> CaptureSnapshotAsync(
         Solution solution, CodeAnalysisAgent agent)
     {
         var diagnosticsTask = DiagnosticsTools.GetAllDiagnosticsAsync(solution);
-        var metricsTask = agent.GetWorstTypes(solution, skip: 0, take: 10000);
+        var metricsTask = agent.GetWorstTypes(solution, skip: 0, take: 50);
 
         await Task.WhenAll(diagnosticsTask, metricsTask);
 
@@ -120,86 +114,4 @@ public static class QualityTools
         return new QualityComparison(before, after, improved, degraded, newTypes, removedTypes);
     }
 
-    public static async Task<List<string>> GetGitChangedCsFilesAsync(string rootPath)
-    {
-        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        // Unstaged + staged changes vs HEAD
-        await RunGitAndCollect(rootPath, "diff --name-only HEAD", files);
-        // Untracked files
-        await RunGitAndCollect(rootPath, "ls-files --others --exclude-standard", files);
-
-        return files.Where(f => f.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)).ToList();
-    }
-
-    private static async Task RunGitAndCollect(string rootPath, string args, HashSet<string> files)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("git", args)
-            {
-                WorkingDirectory = rootPath,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc is null) return;
-
-            var output = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                var fullPath = Path.GetFullPath(Path.Combine(rootPath, line.Replace('/', Path.DirectorySeparatorChar)));
-                files.Add(fullPath);
-            }
-        }
-        catch
-        {
-            // git not available or not a repo — silently ignore
-        }
-    }
-
-    public static async Task<GitFallbackReport> BuildGitFallbackReportAsync(
-        Solution solution, CodeAnalysisAgent agent, string rootPath)
-    {
-        var changedFiles = await GetGitChangedCsFilesAsync(rootPath);
-
-        if (changedFiles.Count == 0)
-            return new GitFallbackReport([], [], []);
-
-        // Get diagnostics for changed files
-        var diagnostics = new List<DiagnosticsTools.DiagnosticEntry>();
-        foreach (var file in changedFiles)
-        {
-            try
-            {
-                var fileDiags = await DiagnosticsTools.GetDiagnosticsAsync(solution, file);
-                diagnostics.AddRange(fileDiags);
-            }
-            catch
-            {
-                // File might not be part of the solution
-            }
-        }
-
-        // Get all type metrics and filter to types in changed files
-        var allMetrics = await agent.GetWorstTypes(solution, skip: 0, take: 10000);
-        var changedFileNames = new HashSet<string>(
-            changedFiles.Select(Path.GetFileNameWithoutExtension).Where(n => n is not null)!,
-            StringComparer.OrdinalIgnoreCase);
-
-        // We can't directly map types to files via ArchiMetrics, so get all metrics
-        // and return them — the report focuses on diagnostics per changed file
-        var typeMetrics = allMetrics.Items
-            .Select(t => new TypeMetricEntry(
-                $"{t.NamespaceName}.{t.Name}",
-                t.MaintainabilityIndex, t.CyclomaticComplexity,
-                t.LinesOfCode, t.ClassCoupling, t.Instability))
-            .ToList();
-
-        return new GitFallbackReport(changedFiles, diagnostics, typeMetrics);
-    }
 }

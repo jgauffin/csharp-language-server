@@ -120,12 +120,14 @@ public class QualityToolsTests : WorkspaceFixture
                 ["Ns.B"] = new("Ns.B", 80, 5, 50, 3, 0.5),
             });
 
-        var text = TextFormatter.Format(snapshot);
+        var text = TextFormatter.FormatSnapshot("snap-1", snapshot);
 
+        text.ShouldContain("snap-1");
         text.ShouldContain("2026-03-10 14:30:00");
         text.ShouldContain("Errors: 2");
         text.ShouldContain("Warnings: 8");
         text.ShouldContain("Types measured: 2");
+        text.ShouldContain("quality_report(label: \"snap-1\")");
     }
 
     [Fact]
@@ -153,33 +155,6 @@ public class QualityToolsTests : WorkspaceFixture
         // MI values formatted with current culture (may use comma or dot)
         text.ShouldContain("MI:");
         text.ShouldContain("CC: 15 -> 8 (-7)");
-    }
-
-    [Fact]
-    public void Format_GitFallbackReport_ShowsChangedFiles()
-    {
-        var report = new GitFallbackReport(
-            ["src/Foo.cs", "src/Bar.cs"],
-            [new DiagnosticsTools.DiagnosticEntry("CS0168", "Warning", "unused var", "src/Foo.cs", 10, 5)],
-            [new TypeMetricEntry("Ns.Foo", 65.0, 12, 150, 8, 0.9)]);
-
-        var text = TextFormatter.Format(report);
-
-        text.ShouldContain("No quality snapshot found");
-        text.ShouldContain("Changed files: 2");
-        text.ShouldContain("CS0168");
-        text.ShouldContain("Ns.Foo");
-        text.ShouldContain("MI:");
-    }
-
-    [Fact]
-    public void Format_GitFallbackReport_EmptyChanges()
-    {
-        var report = new GitFallbackReport([], [], []);
-
-        var text = TextFormatter.Format(report);
-
-        text.ShouldContain("No changed .cs files detected");
     }
 
     [Fact]

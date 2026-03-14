@@ -77,7 +77,7 @@ var agent = new CodeAnalysisAgent(workspace.InnerWorkspace, solutionDir);
 var tools = new CsharpTools(workspace, agent, NullLogger<CsharpTools>.Instance);
 
 // ── Discover files and pick targets ─────────────────────────────────────
-var allFiles = ProjectTools.GetProjectFiles(solution);
+var allFiles = ProjectTools.GetSolutionFiles(solution, solutionDir);
 Console.WriteLine($"  Found {allFiles.Count} files across {solution.Projects.Count()} projects");
 
 var csFiles = allFiles.Where(f => f.FilePath.EndsWith(".cs")).ToList();
@@ -94,27 +94,26 @@ foreach (var f in targetFiles)
 Console.WriteLine();
 
 // ═══════════════════════════════════════════════════════════════════════
-// ProjectTools.GetProjectFiles
+// ProjectTools.GetSolutionFiles
 // ═══════════════════════════════════════════════════════════════════════
-await RunStep("GetProjectFiles (all)", () =>
+await RunStep("GetSolutionFiles (all)", () =>
 {
-    var files = ProjectTools.GetProjectFiles(solution);
+    var files = ProjectTools.GetSolutionFiles(solution, solutionDir);
     Expect(files.Count > 0, $"Expected files, got {files.Count}");
     return Task.FromResult(files);
 });
 
 var firstProject = solution.Projects.First().Name;
-await RunStep($"GetProjectFiles (project={firstProject})", () =>
+await RunStep($"GetSolutionFiles (search={firstProject})", () =>
 {
-    var files = ProjectTools.GetProjectFiles(solution, projectName: firstProject);
-    Expect(files.Count > 0, $"Expected files in {firstProject}");
-    Expect(files.All(f => f.ProjectName == firstProject), "Wrong project in results");
+    var files = ProjectTools.GetSolutionFiles(solution, solutionDir, search: firstProject);
+    Expect(files.Count > 0, $"Expected files matching {firstProject}");
     return Task.FromResult(files);
 });
 
-await RunStep("GetProjectFiles (pattern=.cs)", () =>
+await RunStep("GetSolutionFiles (search=*.cs)", () =>
 {
-    var files = ProjectTools.GetProjectFiles(solution, filePattern: ".cs");
+    var files = ProjectTools.GetSolutionFiles(solution, solutionDir, search: "*.cs");
     Expect(files.Count > 0, "Expected .cs files");
     return Task.FromResult(files);
 });

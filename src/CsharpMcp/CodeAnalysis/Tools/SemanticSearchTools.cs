@@ -21,7 +21,7 @@ public static class SemanticSearchTools
         ["type"] = SymbolKind.NamedType,
     };
 
-    private static bool MatchesKind(ISymbol sym, string kind)
+    internal static bool MatchesKind(ISymbol sym, string kind)
     {
         // Direct match on SymbolKind name (e.g. "Method", "NamedType", "Property")
         if (sym.Kind.ToString().Equals(kind, StringComparison.OrdinalIgnoreCase))
@@ -50,7 +50,7 @@ public static class SemanticSearchTools
         int maxResults = 200)
     {
         var projects = projectName is not null
-            ? solution.Projects.Where(p => p.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+            ? solution.Projects.Where(p => ProjectTools.MatchesPattern(p.Name, projectName))
             : solution.Projects;
 
         var results = new List<FindResult>();
@@ -59,7 +59,7 @@ public static class SemanticSearchTools
         {
             var symbols = await SymbolFinder.FindSourceDeclarationsAsync(
                 project,
-                name => name.Contains(namePattern, StringComparison.OrdinalIgnoreCase)
+                name => ProjectTools.MatchesPattern(name, namePattern)
             );
 
             foreach (var sym in symbols)

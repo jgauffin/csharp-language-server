@@ -140,19 +140,36 @@ public static class CacheReader
         return results;
     }
 
-    static DirectoryInfo? ResolveVersionDir(string id, string? version)
+    public record ResolveResult(DirectoryInfo? Dir, string? Error);
+
+    public static ResolveResult ResolveVersionDirWithError(string id, string? version)
     {
         var pkgDir = new DirectoryInfo(Path.Combine(CachePath, id.ToLowerInvariant()));
-        if (!pkgDir.Exists) return null;
+        if (!pkgDir.Exists)
+            return new(null, $"Package '{id}' not found in local NuGet cache. Use nuget_search to find and download it first.");
 
         if (version != null)
-            return new DirectoryInfo(Path.Combine(pkgDir.FullName, version.ToLowerInvariant()));
+        {
+            var vDir = new DirectoryInfo(Path.Combine(pkgDir.FullName, version.ToLowerInvariant()));
+            if (!vDir.Exists)
+            {
+                var available = pkgDir.GetDirectories().Select(d => d.Name).OrderDescending().ToArray();
+                return new(null, $"Version '{version}' not found for '{id}'. Available versions: {string.Join(", ", available)}");
+            }
+            return new(vDir, null);
+        }
 
         // pick highest version
-        return pkgDir.GetDirectories()
+        var best = pkgDir.GetDirectories()
             .OrderByDescending(d => d.Name)
             .FirstOrDefault();
+        return best != null
+            ? new(best, null)
+            : new(null, $"No versions found in cache for '{id}'.");
     }
+
+    static DirectoryInfo? ResolveVersionDir(string id, string? version)
+        => ResolveVersionDirWithError(id, version).Dir;
 
     static AssemblyInfo? ReadAssemblyTypes(FileInfo dll, string packageRoot)
     {

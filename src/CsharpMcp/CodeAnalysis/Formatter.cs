@@ -134,6 +134,34 @@ public static class TextFormatter
         return sb.ToString().TrimEnd();
     }
 
+    // XML documentation
+
+    public static string Format(List<TypeIntelligenceTools.XmlDocEntry> entries)
+    {
+        if (entries.Count == 0) return "No documented symbols found.";
+        var sb = new StringBuilder();
+        for (int i = 0; i < entries.Count; i++)
+        {
+            if (i > 0) sb.AppendLine();
+            var e = entries[i];
+            sb.Append(e.SymbolName).Append(' ').Append(e.Kind).Append(' ')
+              .Append(e.FilePath).Append(':').AppendLine(e.Line.ToString());
+            if (e.Summary is not null)
+                sb.Append("  Summary: ").AppendLine(e.Summary);
+            foreach (var (name, text) in e.Params)
+                sb.Append("  Param ").Append(name).Append(": ").AppendLine(text);
+            if (e.Returns is not null)
+                sb.Append("  Returns: ").AppendLine(e.Returns);
+            if (e.Remarks is not null)
+                sb.Append("  Remarks: ").AppendLine(e.Remarks);
+            if (e.Example is not null)
+                sb.Append("  Example: ").AppendLine(e.Example);
+            foreach (var ex in e.Exceptions)
+                sb.Append("  Throws: ").AppendLine(ex);
+        }
+        return sb.ToString().TrimEnd();
+    }
+
     // Find / workspace symbols
 
     public static string Format(List<SemanticSearchTools.FindResult> results)
@@ -427,10 +455,11 @@ public static class TextFormatter
 
     // Quality snapshot confirmation
 
-    public static string Format(QualitySnapshot snapshot)
+    public static string FormatSnapshot(string label, QualitySnapshot snapshot)
     {
-        return $"Quality snapshot captured at {snapshot.CapturedAt:yyyy-MM-dd HH:mm:ss}\n" +
-               $"Errors: {snapshot.ErrorCount}  Warnings: {snapshot.WarningCount}  Types measured: {snapshot.TypeMetrics.Count}";
+        return $"Quality snapshot \"{label}\" captured at {snapshot.CapturedAt:yyyy-MM-dd HH:mm:ss}\n" +
+               $"Errors: {snapshot.ErrorCount}  Warnings: {snapshot.WarningCount}  Types measured: {snapshot.TypeMetrics.Count}\n" +
+               $"Use quality_report(label: \"{label}\") when done to see the impact of your changes.";
     }
 
     // Quality comparison report
@@ -489,49 +518,6 @@ public static class TextFormatter
             sb.AppendLine();
             sb.Append("Summary: Net MI change ").Append(FormatDelta(avgDelta, "F1"))
               .Append(" avg across ").Append(result.After.TypeMetrics.Count).Append(" types");
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    // Git fallback report
-
-    public static string Format(GitFallbackReport result)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("No quality snapshot found. Showing current state of git-changed files.");
-        sb.AppendLine("(Run quality_snapshot first to enable delta tracking.)");
-        sb.AppendLine();
-
-        if (result.ChangedFiles.Count == 0)
-        {
-            sb.Append("No changed .cs files detected.");
-            return sb.ToString();
-        }
-
-        sb.Append("Changed files: ").AppendLine(result.ChangedFiles.Count.ToString());
-
-        if (result.Diagnostics.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("Diagnostics on Changed Files");
-            foreach (var d in result.Diagnostics)
-                sb.Append("  ").Append(d.Id).Append(' ').Append(d.Severity).Append(' ')
-                  .Append(d.FilePath).Append(':').Append(d.Line).Append(':').Append(d.Column)
-                  .Append(' ').AppendLine(d.Message);
-        }
-
-        if (result.TypeMetrics.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("Workspace Type Metrics (worst first)");
-            foreach (var t in result.TypeMetrics.Take(30))
-                sb.Append("  ").Append(t.FullName)
-                  .Append("  MI: ").Append(t.MI.ToString("F1"))
-                  .Append("  CC: ").Append(t.CC)
-                  .Append("  LOC: ").Append(t.LOC)
-                  .Append("  Coupling: ").Append(t.Coupling)
-                  .AppendLine();
         }
 
         return sb.ToString().TrimEnd();

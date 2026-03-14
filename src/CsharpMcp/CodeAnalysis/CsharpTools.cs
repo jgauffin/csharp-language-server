@@ -70,18 +70,25 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => CodeStructureTools.GetImportsAsync(workspace.Solution, filePath),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Search symbols by name pattern. Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project. Use maxResults to limit output.")]
+    [McpServerTool, Description("Search symbols by name pattern (glob: *, ? or substring). Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project name (glob or substring). Use maxResults to limit output.")]
     public Task<string> find(
         string namePattern, string? kind = null, string? projectName = null, int maxResults = 200) =>
         Safe(
             () => SemanticSearchTools.FindAsync(workspace.Solution, namePattern, kind, projectName, maxResults),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Fast fuzzy symbol search across the workspace or a specific project. Use maxResults to limit output.")]
+    [McpServerTool, Description("Fast symbol search across the workspace. query supports glob (*, ?) or substring match. projectName filters by project (glob or substring).")]
     public Task<string> get_workspace_symbols(
         string query, string? projectName = null, int maxResults = 200) =>
         Safe(
             () => SemanticSearchTools.GetWorkspaceSymbolsAsync(workspace.Solution, query, projectName, maxResults),
+            TextFormatter.Format);
+
+    [McpServerTool, Description("Get XML documentation for symbols matching a name pattern (glob: *, ? or substring). Optionally filter by kind (class, method, property, etc.) and project name. Returns summary, params, returns, remarks, examples, and exceptions.")]
+    public Task<string> get_xmldoc(
+        string namePattern, string? kind = null, string? projectName = null, int maxResults = 100) =>
+        Safe(
+            () => TypeIntelligenceTools.GetXmlDocAsync(workspace.Solution, namePattern, kind, projectName, maxResults),
             TextFormatter.Format);
 
     [McpServerTool, Description("Get errors and warnings for a specific file.")]
@@ -90,7 +97,7 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => DiagnosticsTools.GetDiagnosticsAsync(workspace.Solution, filePath),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Get errors and warnings for all projects, or a specific one. Default filters to Warning+Error only. Use minSeverity='info' or 'hidden' to include more. Use skip/take to page.")]
+    [McpServerTool, Description("Get errors and warnings for all projects, or filter by project name (glob: *, ? or substring). Default filters to Warning+Error only. Use minSeverity='info' or 'hidden' to include more. Use skip/take to page.")]
     public Task<string> get_all_diagnostics(string? projectName = null, string? minSeverity = null, int skip = 0, int take = 100) =>
         Safe(
             () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take),
@@ -140,10 +147,10 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
                 workspace.Solution, new Position(filePath, line, column), maxResults),
             TextFormatter.Format);
 
-    [McpServerTool, Description("List all source files in the workspace, optionally filtered by project name and/or file name pattern (substring match). Use maxResults to limit output.")]
-    public Task<string> get_project_files(
-        string? projectName = null, string? filePattern = null, int maxResults = 500) =>
-        Task.FromResult(TextFormatter.Format(ProjectTools.GetProjectFiles(workspace.Solution, projectName, filePattern, maxResults)));
+    [McpServerTool, Description("List source files in the solution. Use search to filter by file path or project name — supports glob patterns (*, ?) or plain substring match. Returns relative paths.")]
+    public Task<string> get_solution_files(
+        string? search = null, int maxResults = 200) =>
+        Task.FromResult(TextFormatter.Format(ProjectTools.GetSolutionFiles(workspace.Solution, workspace.RootPath, search, maxResults)));
 
     [McpServerTool, Description("Get code actions (quick fixes) for diagnostics in a file. Includes fixes like add using, implement interface, generate constructor, etc. Optionally filter to a specific position. Use maxResults to limit output.")]
     public Task<string> get_code_actions(
@@ -191,32 +198,28 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => agent.GenerateWorkspaceSummary(workspace.Solution),
             s => s);
 
-    private QualitySnapshot? _snapshot;
+    private readonly Dictionary<string, QualitySnapshot> _snapshots = new(StringComparer.Ordinal);
+    private int _snapshotCounter;
 
-    [McpServerTool, Description("Capture a quality baseline snapshot (metrics + diagnostics). Use before making changes, then call quality_report to see the impact.")]
+    [McpServerTool, Description("Capture a quality baseline snapshot (metrics + diagnostics). Use before making changes, then call quality_report with the returned label to see the impact.")]
     public Task<string> quality_snapshot() =>
         Safe(async () =>
         {
-            _snapshot = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
-            return _snapshot;
-        }, TextFormatter.Format);
+            var label = $"snap-{Interlocked.Increment(ref _snapshotCounter)}";
+            var snapshot = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+            _snapshots[label] = snapshot;
+            return (label, snapshot);
+        }, t => TextFormatter.FormatSnapshot(t.label, t.snapshot));
 
-    [McpServerTool, Description("Compare current code quality against stored snapshot. Shows metric deltas per type. If no snapshot, reports quality of git-changed files instead.")]
-    public Task<string> quality_report() =>
-        Safe<object>(async () =>
+    [McpServerTool, Description("Compare current code quality against a stored snapshot. Pass the label returned by quality_snapshot. Call quality_snapshot before making changes, then call this after.")]
+    public Task<string> quality_report([Description("The label returned by quality_snapshot")] string label) =>
+        Safe(async () =>
         {
-            if (_snapshot is not null)
-            {
-                var current = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
-                return QualityTools.CompareSnapshots(_snapshot, current);
-            }
-            return await QualityTools.BuildGitFallbackReportAsync(workspace.Solution, agent, workspace.RootPath);
-        }, obj => obj switch
-        {
-            QualityComparison c => TextFormatter.Format(c),
-            GitFallbackReport g => TextFormatter.Format(g),
-            _ => obj.ToString()!
-        });
+            if (!_snapshots.TryGetValue(label, out var baseline))
+                throw new ArgumentException($"Unknown snapshot label '{label}'. Call quality_snapshot first.");
+            var current = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+            return QualityTools.CompareSnapshots(baseline, current);
+        }, TextFormatter.Format);
 
     private async Task<string> Safe<T>(Func<Task<T>> action, Func<T, string> format, [CallerMemberName] string tool = "")
     {
