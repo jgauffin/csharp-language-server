@@ -42,6 +42,34 @@ public static class TextFormatter
         return sb.ToString().TrimEnd();
     }
 
+    // Trace usage tree
+
+    public static string Format(NavigationTools.TraceUsageNode? root)
+    {
+        if (root is null) return "No symbol found at position.";
+        var sb = new StringBuilder();
+        AppendTraceNode(sb, root, 0);
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendTraceNode(StringBuilder sb, NavigationTools.TraceUsageNode node, int depth)
+    {
+        var indent = new string(' ', depth * 2);
+        sb.Append(indent).Append(node.SymbolName);
+        if (node.Location.FilePath.Length > 0)
+            sb.Append(" [").Append(node.Location.FilePath).Append(':').Append(node.Location.Line).Append(']');
+        if (node.IsCycle) sb.Append("  (cycle)");
+        else if (depth > 0 && node.Children.Count == 0 && node.OmittedCount == 0)
+            sb.Append("  (max depth)");
+        sb.AppendLine();
+
+        foreach (var child in node.Children)
+            AppendTraceNode(sb, child, depth + 1);
+
+        if (node.OmittedCount > 0)
+            sb.Append(indent).Append("  +").Append(node.OmittedCount).AppendLine(" omitted");
+    }
+
     // Call hierarchy
 
     public static string Format(List<NavigationTools.CallInfo> calls)
@@ -110,7 +138,7 @@ public static class TextFormatter
         var sb = new StringBuilder();
         foreach (var s in symbols)
         {
-            sb.Append(s.Name).Append(' ').Append(s.Kind).Append(" :").Append(s.Line);
+            sb.Append(s.Name).Append(' ').Append(s.Kind).Append(" :").Append(s.Line).Append(':').Append(s.Column);
             if (!string.IsNullOrEmpty(s.ContainingType)) sb.Append(' ').Append(s.ContainingType);
             sb.AppendLine();
         }
@@ -171,7 +199,7 @@ public static class TextFormatter
         foreach (var r in results)
         {
             sb.Append(r.Name).Append(' ').Append(r.Kind).Append(' ');
-            sb.Append(r.FilePath).Append(':').Append(r.Line);
+            sb.Append(r.FilePath).Append(':').Append(r.Line).Append(':').Append(r.Column);
             if (!string.IsNullOrEmpty(r.ContainingType)) sb.Append(" (").Append(r.ContainingType).Append(')');
             sb.AppendLine();
         }
@@ -543,6 +571,51 @@ public static class TextFormatter
                   .Append(" (").Append(FormatDelta(d.CouplingDelta)).Append(')');
         }
         sb.AppendLine();
+    }
+
+    // Indirection hotspots
+
+    public static string Format(IndirectionTools.IndirectionResult result)
+    {
+        if (result.Items.Count == 0) return "No indirection hotspots found.";
+        var sb = new StringBuilder();
+        sb.Append("Showing ").Append(result.Items.Count).Append(" of ").Append(result.TotalCount)
+          .Append(" hotspot(s) in ").Append(result.AnalysisScope)
+          .AppendLine(", sorted by indirection score:");
+        sb.AppendLine();
+
+        foreach (var o in result.Items)
+        {
+            sb.Append("## ").Append(o.SymbolName)
+              .Append(" (").Append(o.SymbolKind).AppendLine(")");
+            sb.Append("  ").Append(o.Location.FilePath)
+              .Append(':').AppendLine(o.Location.Line.ToString());
+            sb.Append("  Score: ").Append(o.Score.ToString("F1"))
+              .Append("  Chains: ").Append(o.TotalChainCount)
+              .Append("  Max depth: ").Append(o.MaxChainDepth)
+              .Append("  Avg depth: ").Append(o.AvgChainDepth.ToString("F1"))
+              .Append("  Direct: ").Append(o.DirectCallerCount)
+              .Append("  Indirect: ").Append(o.IndirectCallerCount)
+              .AppendLine();
+
+            if (o.WorstChains.Count > 0)
+            {
+                sb.AppendLine("  Worst chains:");
+                foreach (var chain in o.WorstChains)
+                {
+                    sb.Append("    ");
+                    for (int i = 0; i < chain.Steps.Count; i++)
+                    {
+                        if (i > 0) sb.Append(" -> ");
+                        sb.Append(chain.Steps[i].SymbolName);
+                    }
+                    sb.AppendLine();
+                }
+            }
+            sb.AppendLine();
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     private static string FormatDelta(int delta) =>

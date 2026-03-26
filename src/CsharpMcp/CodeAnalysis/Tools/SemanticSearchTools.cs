@@ -5,7 +5,7 @@ namespace CsharpMcp.CodeAnalysis.Tools;
 
 public static class SemanticSearchTools
 {
-    public record FindResult(string Name, string Kind, string FilePath, int Line, string ContainingType);
+    public record FindResult(string Name, string Kind, string FilePath, int Line, int Column, string ContainingType);
 
     /// <summary>
     /// Searches for symbols by name pattern across all projects (or a specific one).
@@ -76,6 +76,7 @@ public static class SemanticSearchTools
                     sym.Kind.ToString(),
                     span.Path,
                     span.StartLinePosition.Line + 1,
+                    span.StartLinePosition.Character + 1,
                     sym.ContainingType?.ToDisplayString() ?? sym.ContainingNamespace?.ToString() ?? ""
                 ));
 

@@ -72,6 +72,11 @@ public static class RefactoringTools
         var symbol = await SymbolFinder.FindSymbolAtPositionAsync(doc, offset)
             ?? throw new ArgumentException($"No symbol found at {pos.FilePath}:{pos.Line}:{pos.Column}");
 
+        if (!symbol.Locations.Any(l => l.IsInSource))
+            throw new ArgumentException(
+                $"Symbol '{symbol.ToDisplayString()}' is not a user-defined source symbol and cannot be renamed. " +
+                $"Ensure the position points to the identifier name, not a keyword or type reference.");
+
         var renamedSolution = await Renamer.RenameSymbolAsync(
             solution,
             symbol,

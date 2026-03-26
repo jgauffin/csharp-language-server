@@ -6,7 +6,7 @@ namespace CsharpMcp.CodeAnalysis.Tools;
 
 public static class CodeStructureTools
 {
-    public record SymbolEntry(string Name, string Kind, int Line, string ContainingType);
+    public record SymbolEntry(string Name, string Kind, int Line, int Column, string ContainingType);
 
     public static async Task<List<SymbolEntry>> GetSymbolsAsync(Solution solution, string filePath)
     {
@@ -23,16 +23,17 @@ public static class CodeStructureTools
             {
                 var sym = model.GetDeclaredSymbol(n);
                 if (sym is null) return null;
-                var line = n.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+                var loc = sym.Locations.FirstOrDefault(l => l.IsInSource);
+                var linePos = (loc ?? n.GetLocation()).GetLineSpan().StartLinePosition;
                 var containing = sym.ContainingType?.Name ?? sym.ContainingNamespace?.ToString() ?? "";
-                return new SymbolEntry(sym.Name, sym.Kind.ToString(), line, containing);
+                return new SymbolEntry(sym.Name, sym.Kind.ToString(), linePos.Line + 1, linePos.Character + 1, containing);
             })
             .Where(e => e is not null)
             .Select(e => e!)
             .ToList();
     }
 
-    public record OutlineNode(string Name, string Kind, int Line, List<OutlineNode> Children);
+    public record OutlineNode(string Name, string Kind, int Line, int Column, List<OutlineNode> Children);
 
     public static async Task<List<OutlineNode>> GetOutlineAsync(Solution solution, string filePath)
     {
@@ -69,7 +70,7 @@ public static class CodeStructureTools
         {
             foreach (var node in nodes)
             {
-                lines.Add($"{new string(' ', depth)}{node.Name} :{node.Line} {node.Kind}");
+                lines.Add($"{new string(' ', depth)}{node.Name} :{node.Line}:{node.Column} {node.Kind}");
                 Render(node.Children, depth + 1);
             }
         }
@@ -89,9 +90,10 @@ public static class CodeStructureTools
             var sym = model.GetDeclaredSymbol(child);
             if (sym is null) continue;
 
-            var line = child.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+            var loc = sym.Locations.FirstOrDefault(l => l.IsInSource);
+            var linePos = (loc ?? child.GetLocation()).GetLineSpan().StartLinePosition;
             var children = BuildOutline(child, model, depth + 1);
-            results.Add(new OutlineNode(sym.Name, sym.Kind.ToString(), line, children));
+            results.Add(new OutlineNode(sym.Name, sym.Kind.ToString(), linePos.Line + 1, linePos.Character + 1, children));
         }
         return results;
     }

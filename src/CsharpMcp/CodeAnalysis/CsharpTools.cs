@@ -34,6 +34,17 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => NavigationTools.GetCallHierarchyAsync(workspace.Solution, new Position(filePath, line, column)),
             TextFormatter.Format);
 
+    [McpServerTool, Description(
+        "Trace usages of any symbol (method, property setter, field, etc.) as an indented tree, " +
+        "following callers N levels deep. Useful for understanding the blast radius of a change. " +
+        "maxDepth controls recursion depth (default 3). maxPerNode limits callers shown per node " +
+        "by relevance score: same namespace/project is preferred, generated and test code is deprioritized. " +
+        "Truncated callers are reported as '+N omitted'.")]
+    public Task<string> trace_usages(string filePath, int line, int column, int maxDepth = 3, int maxPerNode = 5) =>
+        Safe(
+            () => NavigationTools.TraceUsagesAsync(workspace.Solution, new Position(filePath, line, column), maxDepth, maxPerNode),
+            TextFormatter.Format);
+
     [McpServerTool, Description("Navigate base types, interfaces, and derived types.")]
     public Task<string> get_type_hierarchy(string filePath, int line, int column) =>
         Safe(
@@ -103,7 +114,7 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Preview the impact of a rename without writing to disk.")]
+    [McpServerTool, Description("Preview the impact of a rename without writing to disk. line/column must point to the identifier to rename (1-based). Use get_symbols or find to get the exact line:column of the symbol.")]
     public Task<string> rename_preview(
         string filePath, int line, int column, string newName) =>
         Safe(
@@ -111,7 +122,7 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
                 workspace.Solution, new Position(filePath, line, column), newName),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Rename a symbol across all projects and write changes to disk. Fails on compilation errors.")]
+    [McpServerTool, Description("Rename a symbol across all projects and write changes to disk. Fails on compilation errors. line/column must point to the identifier to rename (1-based). Use get_symbols or find to get the exact line:column of the symbol.")]
     public Task<string> rename_symbol(
         string filePath, int line, int column, string newName) =>
         Safe(
@@ -198,8 +209,27 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             () => agent.GenerateWorkspaceSummary(workspace.Solution),
             s => s);
 
-    private readonly Dictionary<string, QualitySnapshot> _snapshots = new(StringComparer.Ordinal);
-    private int _snapshotCounter;
+    [McpServerTool, Description(
+        "Find symbols most heavily accessed through layers of indirection " +
+        "(A -> B -> C). Returns worst offenders ranked by score with full call chains. " +
+        "Useful for identifying hidden coupling and deeply wrapped dependencies. " +
+        "Use projectName (glob or substring) to scope to a single project.")]
+    public Task<string> find_indirection_hotspots(
+        [Description("Filter to a specific project (glob or substring). Omit for entire solution.")] string? projectName = null,
+        [Description("Max call chain depth to trace (default 5).")] int maxDepth = 5,
+        [Description("Minimum direct callers required to be a candidate (default 3). Lower = more results but slower.")] int minDirectCallers = 3,
+        [Description("Max example chains to show per offender.")] int maxChainsPerOffender = 5,
+        [Description("Include test files in the analysis.")] bool includeTests = false,
+        int skip = 0,
+        int take = 30) =>
+        Safe(
+            () => IndirectionTools.FindIndirectionHotspotsAsync(
+                workspace.Solution, projectName, maxDepth, minDirectCallers,
+                maxChainsPerOffender, includeTests, skip, take),
+            TextFormatter.Format);
+
+    private static readonly Dictionary<string, QualitySnapshot> _snapshots = new(StringComparer.Ordinal);
+    private static int _snapshotCounter;
 
     [McpServerTool, Description("Capture a quality baseline snapshot (metrics + diagnostics). Use before making changes, then call quality_report with the returned label to see the impact.")]
     public Task<string> quality_snapshot() =>
