@@ -127,7 +127,7 @@ public class QualityToolsTests : WorkspaceFixture
         text.ShouldContain("Errors: 2");
         text.ShouldContain("Warnings: 8");
         text.ShouldContain("Types measured: 2");
-        text.ShouldContain("quality_report(label: \"snap-1\")");
+        text.ShouldContain("quality_hotspots(compareToSnapshot: \"snap-1\")");
     }
 
     [Fact]

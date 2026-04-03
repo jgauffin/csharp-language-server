@@ -25,12 +25,12 @@ public class NugetToolsTests : IDisposable
     }
 
     [Fact]
-    public void ListCached_ReturnsPackageSummaries()
+    public void Packages_NoId_ReturnsPackageSummaries()
     {
         CreatePackage("mypkg", "1.0.0");
         CreatePackage("mypkg", "2.0.0");
 
-        var result = _tools.nuget_list_cached();
+        var result = _tools.nuget_packages();
 
         result.ShouldContain("mypkg");
         result.ShouldContain("2.0.0");
@@ -38,18 +38,18 @@ public class NugetToolsTests : IDisposable
     }
 
     [Fact]
-    public void PackageInfo_ReturnsErrorForMissing()
+    public void Packages_WithMissingId_ReturnsError()
     {
-        var result = _tools.nuget_package_info("nonexistent");
+        var result = _tools.nuget_packages(id: "nonexistent");
         result.ShouldContain("not found");
     }
 
     [Fact]
-    public void PackageInfo_WithValidPackage_ReturnsFormatted()
+    public void Packages_WithValidId_ReturnsFormatted()
     {
         CreatePackageWithNuspec("testpkg", "1.0.0");
 
-        var result = _tools.nuget_package_info("testpkg");
+        var result = _tools.nuget_packages(id: "testpkg");
         result.ShouldContain("Package: testpkg 1.0.0");
         result.ShouldContain("Description: Test");
     }
@@ -68,14 +68,14 @@ public class NugetToolsTests : IDisposable
     }
 
     [Fact]
-    public void AssemblyTypes_NonExistentPackage_ReturnsEmpty()
+    public void Explore_NonExistentPackage_ReturnsError()
     {
-        var result = _tools.nuget_assembly_types("nonexistent");
-        result.ShouldBe("No assemblies found.");
+        var result = _tools.nuget_explore("nonexistent");
+        result.ShouldContain("not found");
     }
 
     [Fact]
-    public void AssemblyDocs_WithXml_ReturnsDocs()
+    public void Explore_WithDocs_ReturnsDocs()
     {
         var dir = CreatePackage("docpkg", "1.0.0");
         var xmlDir = Path.Combine(dir, "lib", "net8.0");
@@ -89,14 +89,14 @@ public class NugetToolsTests : IDisposable
             </doc>
             """);
 
-        var result = _tools.nuget_assembly_docs("docpkg");
+        var result = _tools.nuget_explore("docpkg", includeDocs: true);
 
         result.ShouldContain("T:DocPkg.Foo");
         result.ShouldContain("A foo.");
     }
 
     [Fact]
-    public void AssemblyDocs_TypeFilter_NarrowsResults()
+    public void Explore_TypeFilter_NarrowsResults()
     {
         var dir = CreatePackage("docpkg", "1.0.0");
         var xmlDir = Path.Combine(dir, "lib", "net8.0");
@@ -111,7 +111,7 @@ public class NugetToolsTests : IDisposable
             </doc>
             """);
 
-        var result = _tools.nuget_assembly_docs("docpkg", type: "Bar");
+        var result = _tools.nuget_explore("docpkg", type: "Bar", includeDocs: true);
 
         result.ShouldContain("Bar");
         result.ShouldNotContain("Foo");

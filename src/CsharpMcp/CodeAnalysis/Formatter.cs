@@ -487,7 +487,7 @@ public static class TextFormatter
     {
         return $"Quality snapshot \"{label}\" captured at {snapshot.CapturedAt:yyyy-MM-dd HH:mm:ss}\n" +
                $"Errors: {snapshot.ErrorCount}  Warnings: {snapshot.WarningCount}  Types measured: {snapshot.TypeMetrics.Count}\n" +
-               $"Use quality_report(label: \"{label}\") when done to see the impact of your changes.";
+               $"Use quality_hotspots(compareToSnapshot: \"{label}\") when done to see the impact of your changes.";
     }
 
     // Quality comparison report

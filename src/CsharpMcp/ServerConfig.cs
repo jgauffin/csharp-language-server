@@ -1,6 +1,13 @@
 namespace CsharpMcp;
 
-public sealed record ServerConfig(string RootPath, string Name, string? Description, string? ModelDir, string AllowedDir)
+public sealed record ServerConfig(
+    string RootPath,
+    string Name,
+    string? Description,
+    string? ModelDir,
+    string AllowedDir,
+    bool EnableQuality = true,
+    bool EnableNuget = true)
 {
     public static ServerConfig Parse(string[] args)
     {
@@ -9,6 +16,8 @@ public sealed record ServerConfig(string RootPath, string Name, string? Descript
         string? directory = null;
         string? modelDir = null;
         string? allowedDir = null;
+        bool enableQuality = true;
+        bool enableNuget = true;
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -20,6 +29,10 @@ public sealed record ServerConfig(string RootPath, string Name, string? Descript
                 modelDir = args[++i];
             else if (args[i] == "--allowed-dir" && i + 1 < args.Length)
                 allowedDir = args[++i];
+            else if (args[i] == "--no-quality")
+                enableQuality = false;
+            else if (args[i] == "--no-nuget")
+                enableNuget = false;
             else if (!args[i].StartsWith("--"))
                 directory ??= args[i];
         }
@@ -33,6 +46,6 @@ public sealed record ServerConfig(string RootPath, string Name, string? Descript
         if (!Directory.Exists(resolvedAllowedDir))
             throw new ArgumentException($"Allowed directory does not exist: {resolvedAllowedDir}");
 
-        return new ServerConfig(rootPath, name ?? "csharp-language-mcp", description, modelDir, resolvedAllowedDir);
+        return new ServerConfig(rootPath, name ?? "csharp-language-mcp", description, modelDir, resolvedAllowedDir, enableQuality, enableNuget);
     }
 }

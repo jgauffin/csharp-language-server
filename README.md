@@ -25,11 +25,11 @@ Agents working with .NET need to find packages, understand their APIs, and read 
 
 | Task | Without this server | With csharp-language-mcp |
 |------|-------------------|----------------|
-| **Find a package** | Scrape nuget.org search HTML or guess from training data | `nuget_search` — cache-first, structured JSON results |
-| **List available versions** | Parse nuget.org version page or call raw API + paginate | `nuget_package_info` — versions, dependencies, and file listing in one call |
-| **Read public API surface** | Download `.nupkg`, extract DLL, attempt decompilation — most agents can't do this at all | `nuget_assembly_types` — real type/member signatures via `System.Reflection.Metadata` |
-| **Read API documentation** | Scrape docs site (if one exists), hope the formatting parses cleanly | `nuget_assembly_docs` — XML docs from the package, filterable by type |
-| **Token cost** | 20-50k+ tokens of HTML/noise per page, or hallucinated answers at 0 tokens | ~1-5k tokens of focused, structured JSON per call |
+| **Find a package** | Scrape nuget.org search HTML or guess from training data | `nuget_search` — cache-first, structured results |
+| **List cached packages** | Browse filesystem manually | `nuget_packages` — list all cached packages or get metadata for a specific one |
+| **Read public API surface** | Download `.nupkg`, extract DLL, attempt decompilation — most agents can't do this at all | `nuget_explore` — real type/member signatures via `System.Reflection.Metadata` |
+| **Read API documentation** | Scrape docs site (if one exists), hope the formatting parses cleanly | `nuget_explore` with `includeDocs` — XML docs from the package, filterable by type |
+| **Token cost** | 20-50k+ tokens of HTML/noise per page, or hallucinated answers at 0 tokens | ~1-5k tokens of focused, structured output per call |
 
 ### What makes Roslyn different from text search?
 
@@ -112,6 +112,8 @@ Or with a published binary:
 | `[directory]` | Path to C# project root | Current working directory |
 | `--name <name>` | Custom server name (for multi-instance setups) | `csharp-language-mcp` |
 | `--description <text>` | Extra context appended to the built-in server description | _(none)_ |
+| `--no-quality` | Disable quality/metrics tools (saves 2 tools) | _(enabled)_ |
+| `--no-nuget` | Disable NuGet tools (saves 3 tools) | _(enabled)_ |
 
 **Multiple instances** — use `--name` and `--description` to distinguish servers when running one per repo:
 
@@ -132,55 +134,69 @@ Or with a published binary:
 
 The server discovers all `.csproj` files under the root path and loads them into a single Roslyn workspace. All positions are **1-indexed** (line 1, column 1 = first character).
 
-## Tools
+## Tools (21 total)
 
 | Category | Tool | Description |
 |----------|------|-------------|
 | **Navigation** | `get_definition` | Jump from usage to declaration |
 | | `get_references` | Find all usages with read/write classification |
 | | `get_implementations` | Find concrete implementations of interfaces |
-| | `get_call_hierarchy` | Trace function callers / callees |
+| | `get_call_hierarchy` | Trace callers/callees; use `maxDepth` for deep usage tracing |
 | | `get_type_hierarchy` | Navigate base types, interfaces, and derived types |
-| **Type Intelligence** | `get_hover` | Type info and XML docs at a position |
-| | `get_signature` | Function parameter help at a call site |
-| **Code Structure** | `get_symbols` | Flat list of symbols in a file |
-| | `get_outline` | Hierarchical file structure |
+| **Type Intelligence** | `get_hover` | Type info, XML docs, and parameter signatures at a position |
+| **Code Structure** | `get_outline` | Hierarchical file structure (use `flat=true` for flat symbol list) |
 | | `get_imports` | List all using directives |
-| **Semantic Search** | `find` | Search symbols by name pattern, kind, project |
-| | `get_workspace_symbols` | Fast fuzzy symbol search |
+| **Search** | `find` | Search symbols by name pattern, kind, project |
 | **Completions** | `get_completions` | Code completions at a position (members, methods, types, keywords) |
-| **Project** | `get_project_files` | List all source files in the workspace |
-| **Diagnostics** | `get_diagnostics` | Errors/warnings for a file |
-| | `get_all_diagnostics` | Project-wide or solution-wide diagnostics |
-| **Refactoring** | `rename_preview` | Preview rename impact without writing |
-| | `rename_symbol` | Execute rename across all projects |
+| **Diagnostics** | `get_diagnostics` | Errors/warnings for a file or entire workspace |
+| **Refactoring** | `rename` | Preview or execute rename across all projects (`preview=true` by default) |
 | | `format_document` | Format with Roslyn formatter |
 | | `get_code_actions` | Quick fixes for diagnostics (add using, implement interface, etc.) |
 | **Efficiency** | `analyze_position` | Combined hover + diagnostics + symbols in one call |
 | | `batch_analyze` | Analyze multiple positions at once |
-| **Quality** | `quality_snapshot` | Capture baseline metrics + diagnostics for later comparison |
-| | `quality_report` | Compare current quality against snapshot, or report git-changed files |
-| **Code Metrics** | `calculate_metrics` | Worst types by maintainability index |
-| | `get_worst_namespaces` | Namespace-level maintainability ranking |
-| | `get_namespace_types` | Drill into a specific namespace |
-| | `detect_duplication` | Find exact, renamed, and semantic code clones |
-| | `generate_workspace_summary` | High-level workspace health overview |
+| **Quality** | `quality_hotspots` | Composite quality scoring — finds worst code by weighting MI, duplication, opacity, indirection |
+| | `generate_iso5055_report` | ISO 5055 quality report (security, reliability, performance, maintainability) |
 | **NuGet** | `nuget_search` | Cache-first search, falls back to remote |
-| | `nuget_list_cached` | List all locally cached packages and versions |
-| | `nuget_package_info` | Metadata, dependencies, file listing for a cached package |
-| | `nuget_assembly_types` | Public type/member definitions from assemblies (no docs) |
-| | `nuget_assembly_docs` | XML documentation, filterable by type |
+| | `nuget_packages` | List cached packages, or get metadata/deps for a specific package |
+| | `nuget_explore` | Explore assemblies, types, and XML docs in a cached package |
 
-## Quality Tracking
+## Quality Hotspots
 
-The `quality_snapshot` and `quality_report` tools let you measure code quality impact during a coding session.
+The `quality_hotspots` tool identifies code that needs refactoring by weighting four quality dimensions:
 
-**Workflow:**
-1. Call `quality_snapshot` at the start of a session — captures maintainability index, cyclomatic complexity, LOC, coupling, and diagnostic counts for all types
+- **Maintainability** — MI, cyclomatic complexity, LOC, coupling
+- **Duplication** — exact, renamed, and semantic code clones
+- **Opacity** — hard-to-understand methods (embedding similarity, nesting, magic literals)
+- **Indirection** — hidden coupling through deep call chains
+
+Default weights are equal (0.25 each). Override weights to focus on specific concerns.
+
+**Before/after tracking:**
+1. Call `quality_hotspots(snapshotLabel: "before")` at the start of a session
 2. Make your changes
-3. Call `quality_report` — shows per-type deltas, categorized as improved/degraded/new/removed
+3. Call `quality_hotspots(compareToSnapshot: "before")` — shows per-type deltas
 
-If no snapshot exists, `quality_report` falls back to identifying git-changed `.cs` files and reporting diagnostics and workspace-wide metrics.
+## ISO 5055 Support (Partial)
+
+The `generate_iso5055_report` tool provides partial coverage of the [ISO/IEC 5055](https://www.iso.org/standard/80623.html) automated source code quality standard. It analyzes your solution against the four ISO 5055 quality characteristics:
+
+- **Security** — detects CWE-mapped vulnerabilities (e.g. SQL injection, path traversal)
+- **Reliability** — detects defect-prone patterns (e.g. null dereference, empty catch blocks)
+- **Performance Efficiency** — detects resource waste patterns
+- **Maintainability** — detects overly complex or opaque code (e.g. deep nesting, magic numbers)
+
+The report includes violation counts, violations per KLOC, pass/fail per category, covered CWE IDs, and per-violation file paths with fix suggestions.
+
+**Categories and current coverage:**
+
+| Category | Focus | Coverage |
+|----------|-------|----------|
+| **Security** | Exploitable vulnerabilities | Low — pattern-match rules only (unsafe code, CWE-242). No taint analysis. |
+| **Reliability** | Crash/corruption risks | Moderate — dispose pattern, stack trace destruction, event leaks, weak identity locks, virtual calls in constructors |
+| **Performance Efficiency** | Resource waste | Low — sync-over-async detection (CWE-1049) |
+| **Maintainability** | Structural decay | Good — cyclomatic complexity, deep nesting, large classes/methods, too many parameters, lack of cohesion, class instability, goto statements |
+
+**Limitations:** This is not a SAST replacement. Taint-analysis-dependent CWEs (SQL injection, XSS, command injection) require dedicated tools like CodeQL or Semgrep. The report includes `CoveredCweIds` so consumers know exactly which CWEs are in scope.
 
 ## Configuring CLAUDE.md
 
@@ -192,15 +208,15 @@ To get the most out of this server, add these instructions to your project's `CL
 Always prefer csharp MCP tools over grep/bash/find for C# code:
 - Use `get_definition` instead of grepping for class/method definitions
 - Use `get_references` instead of grepping for usages
-- Use `find` or `get_workspace_symbols` instead of find/grep for locating symbols
-- Use `get_diagnostics` / `get_all_diagnostics` instead of running `dotnet build` to check errors
+- Use `find` instead of find/grep for locating symbols
+- Use `get_diagnostics` instead of running `dotnet build` to check errors
 - Use `get_outline` instead of reading entire files to understand structure
 - Use `get_hover` to check types instead of guessing from context
 
 ## Code Quality Tracking
-- At the START of each coding session, call `quality_snapshot` to capture a baseline
-- At the END of each session (before committing), call `quality_report` to review quality impact
-- If quality_report shows degraded types, address them before finishing
+- At the START of each coding session, call `quality_hotspots(snapshotLabel: "before")` to capture a baseline
+- At the END of each session (before committing), call `quality_hotspots(compareToSnapshot: "before")` to review quality impact
+- If quality_hotspots shows degraded types, address them before finishing
 ```
 
 > **Why is this needed?** AI agents default to familiar tools like `grep`, `find`, and `cat`. Without explicit instructions, they will ignore the MCP tools even when they're available — wasting tokens reading entire files and producing less accurate results. The `CLAUDE.md` instructions override this default behavior.

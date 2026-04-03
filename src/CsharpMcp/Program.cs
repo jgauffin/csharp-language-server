@@ -1,5 +1,4 @@
 using ArchiMetrics.Analysis;
-using ArchiMetrics.Analysis.Metrics;
 using CsharpMcp;
 using CsharpMcp.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,7 +19,7 @@ var agent = Directory.Exists(modelDir)
     : new CodeAnalysisAgent(workspace.InnerWorkspace, config.RootPath);
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services
+var services = builder.Services
     .AddSingleton(config)
     .AddSingleton(workspace)
     .AddSingleton(agent)
@@ -34,8 +33,12 @@ builder.Services
         options.ServerInstructions = instructions;
     })
     .WithStdioServerTransport()
-    .WithTools<CsharpTools>()
-    .WithTools<FileTools>()
-    .WithTools<CsharpMcp.Nuget.NugetTools>();
+    .WithTools<CsharpTools>();
+
+if (config.EnableQuality)
+    services.WithTools<QualityHotspotsTools>();
+
+if (config.EnableNuget)
+    services.WithTools<CsharpMcp.Nuget.NugetTools>();
 
 await builder.Build().RunAsync();

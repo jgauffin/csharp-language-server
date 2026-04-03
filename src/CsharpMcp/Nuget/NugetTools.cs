@@ -24,16 +24,15 @@ public class NugetTools
         return NugetFormatter.Format(await RemoteClient.SearchAsync(query, source, take));
     }
 
-    [McpServerTool, Description("List all packages present in the local NuGet cache with their available versions.")]
-    public string nuget_list_cached() =>
-        NugetFormatter.Format(CacheReader.ListCached());
-
-    [McpServerTool, Description("Get metadata, dependencies, and file listing for a cached package.")]
-    public string nuget_package_info(
-        string id,
+    [McpServerTool, Description("List cached NuGet packages, or get metadata/dependencies/files for a specific package. Omit id to list all cached packages. Provide id to get package details.")]
+    public string nuget_packages(
+        [Description("Package id to get details for. Omit to list all cached packages.")] string? id = null,
         [Description("Package version (optional, uses latest cached if omitted)")] string? version = null,
         [Description("Glob-style filter for file listing e.g. '*.dll', 'lib/**/*.xml' (optional, all files if omitted)")] string? fileFilter = null)
     {
+        if (id is null)
+            return NugetFormatter.Format(CacheReader.ListCached());
+
         var resolved = CacheReader.ResolveVersionDirWithError(id, version);
         if (resolved.Error != null) return resolved.Error;
 
@@ -41,26 +40,22 @@ public class NugetTools
         return info != null ? NugetFormatter.Format(info) : $"Package '{id}' not found in cache.";
     }
 
-    [McpServerTool, Description("List assembly names and target frameworks in a cached package. Use this before nuget_assembly_types to find the right assembly name.")]
-    public string nuget_list_assemblies(
-        string id,
-        [Description("Package version (optional, uses latest cached if omitted)")] string? version = null)
-    {
-        var resolved = CacheReader.ResolveVersionDirWithError(id, version);
-        if (resolved.Error != null) return resolved.Error;
-        return NugetFormatter.FormatAssemblyList(CacheReader.ListAssemblies(id, version));
-    }
-
-    [McpServerTool, Description("Get public type and member definitions from assemblies in a cached package. Does not include documentation. Use type filter to reduce output for large packages.")]
-    public string nuget_assembly_types(
+    [McpServerTool, Description("Explore assemblies, types, and documentation in a cached NuGet package. Without assembly param: lists assemblies and target frameworks. With assembly: shows public types and members. With includeDocs: also includes XML documentation.")]
+    public string nuget_explore(
         string id,
         [Description("Package version (optional, uses latest cached if omitted)")] string? version = null,
-        [Description("Assembly filename filter e.g. MyLib.dll or MyLib (optional, all assemblies if omitted)")] string? assembly = null,
-        [Description("Type name filter - only return types whose name contains this string (optional)")] string? type = null)
+        [Description("Assembly filename filter e.g. MyLib.dll or MyLib (optional, lists all assemblies if omitted)")] string? assembly = null,
+        [Description("Type name filter - only return types whose name contains this string (optional)")] string? type = null,
+        [Description("Include XML documentation in the output")] bool includeDocs = false)
     {
         var resolved = CacheReader.ResolveVersionDirWithError(id, version);
         if (resolved.Error != null) return resolved.Error;
 
+        // No assembly specified → list available assemblies
+        if (assembly is null && type is null && !includeDocs)
+            return NugetFormatter.FormatAssemblyList(CacheReader.ListAssemblies(id, version));
+
+        // Get types
         var results = CacheReader.GetAssemblyTypes(id, version, assembly, type);
         if (results.Count == 0 && assembly != null)
         {
@@ -71,18 +66,17 @@ public class NugetTools
         if (results.Count == 0 && type != null)
             return $"No types matching '{type}' found in package '{id}'.";
 
-        return NugetFormatter.Format(results);
-    }
+        var output = NugetFormatter.Format(results);
 
-    [McpServerTool, Description("Get XML documentation for types in a cached package assembly. Use the type filter to reduce token count.")]
-    public string nuget_assembly_docs(
-        string id,
-        [Description("Package version (optional, uses latest cached if omitted)")] string? version = null,
-        [Description("Assembly/XML filename filter e.g. MyLib (optional)")] string? assembly = null,
-        [Description("Type name filter - only return docs for members containing this string (optional)")] string? type = null)
-    {
-        var resolved = CacheReader.ResolveVersionDirWithError(id, version);
-        if (resolved.Error != null) return resolved.Error;
-        return NugetFormatter.Format(CacheReader.GetAssemblyDocs(id, version, assembly, type));
+        // Append docs if requested
+        if (includeDocs)
+        {
+            var docs = CacheReader.GetAssemblyDocs(id, version, assembly, type);
+            var docsOutput = NugetFormatter.Format(docs);
+            if (!string.IsNullOrEmpty(docsOutput) && docsOutput != "No documentation found.")
+                output += "\n\n── Documentation ──\n" + docsOutput;
+        }
+
+        return output;
     }
 }
