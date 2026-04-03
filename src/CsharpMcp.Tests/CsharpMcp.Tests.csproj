@@ -30,6 +30,9 @@
     <Reference Include="ArchiMetrics.Analysis">
       <HintPath>..\..\lib\ArchiMetrics.Analysis.dll</HintPath>
     </Reference>
+    <Reference Include="ArchiMetrics.CodeReview.Rules">
+      <HintPath>..\..\lib\ArchiMetrics.CodeReview.Rules.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>

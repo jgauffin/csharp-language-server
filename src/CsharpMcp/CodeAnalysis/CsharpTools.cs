@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using ArchiMetrics.Analysis;
+using ArchiMetrics.Analysis.Common.CodeReview;
+using ArchiMetrics.CodeReview.Rules;
 using CsharpMcp.CodeAnalysis.Tools;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
@@ -240,6 +242,17 @@ public class CsharpTools(RoslynWorkspace workspace, CodeAnalysisAgent agent, ILo
             _snapshots[label] = snapshot;
             return (label, snapshot);
         }, t => TextFormatter.FormatSnapshot(t.label, t.snapshot));
+
+    [McpServerTool, Description("Generate an ISO 5055 automated source code quality report. Analyzes security, reliability, performance efficiency, and maintainability. Returns violation counts, violations per KLOC, pass/fail status, and covered CWE IDs with per-violation details.")]
+    public Task<string> generate_iso5055_report() =>
+        Safe(async () =>
+        {
+            var syntaxRules = AllRules.GetSyntaxRules(spellChecker: null);
+            var symbolRules = AllRules.GetSymbolRules();
+            var inspector = new NodeReviewer(syntaxRules, symbolRules);
+            var allRules = syntaxRules.Cast<IEvaluation>().Concat(symbolRules);
+            return await agent.GenerateIso5055Report(inspector, allRules);
+        }, TextFormatter.FormatIso5055Report);
 
     [McpServerTool, Description("Compare current code quality against a stored snapshot. Pass the label returned by quality_snapshot. Call quality_snapshot before making changes, then call this after.")]
     public Task<string> quality_report([Description("The label returned by quality_snapshot")] string label) =>

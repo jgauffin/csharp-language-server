@@ -618,6 +618,39 @@ public static class TextFormatter
         return sb.ToString().TrimEnd();
     }
 
+    // ISO 5055 report
+
+    public static string FormatIso5055Report(dynamic report)
+    {
+        var sb = new StringBuilder();
+        sb.Append("ISO 5055 Report  LOC: ").Append(report.TotalLinesOfCode)
+          .Append("  Covered CWEs: ").AppendLine(string.Join(", ", report.CoveredCweIds));
+        sb.AppendLine();
+
+        AppendIso5055Category(sb, "Security", report.Security);
+        AppendIso5055Category(sb, "Reliability", report.Reliability);
+        AppendIso5055Category(sb, "Performance Efficiency", report.PerformanceEfficiency);
+        AppendIso5055Category(sb, "Maintainability", report.Maintainability);
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendIso5055Category(StringBuilder sb, string name, dynamic category)
+    {
+        sb.Append("## ").AppendLine(name);
+        sb.Append("  Violations: ").Append(category.ViolationCount)
+          .Append("  Per KLOC: ").Append(((double)category.ViolationsPerKloc).ToString("F2"))
+          .Append("  Pass: ").AppendLine(((bool)category.Passes).ToString());
+
+        foreach (var v in category.Violations)
+        {
+            sb.Append("  [").Append(string.Join(",", v.CweIds)).Append("] ")
+              .Append((string)v.FilePath).Append(": ").Append((string)v.Title)
+              .Append(" — ").AppendLine((string)v.Suggestion);
+        }
+        sb.AppendLine();
+    }
+
     private static string FormatDelta(int delta) =>
         delta > 0 ? $"+{delta}" : delta.ToString();
 
