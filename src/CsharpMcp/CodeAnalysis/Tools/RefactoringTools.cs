@@ -35,7 +35,10 @@ public static class RefactoringTools
     {
         var solution = workspace.Solution;
 
-        await AssertNoCompilationErrorsAsync(solution);
+        // Only check the project containing the target symbol for errors,
+        // not every project in the solution.
+        var targetDoc = PositionHelper.ResolveDocument(solution, pos.FilePath);
+        await AssertNoCompilationErrorsAsync(targetDoc.Project, workspace.GetCompilationAsync);
 
         var (_, renamedSolution) = await ComputeRenameAsync(solution, pos, newName);
         var changes = await CollectChangesAsync(solution, renamedSolution, newName);
@@ -125,25 +128,22 @@ public static class RefactoringTools
         return changes;
     }
 
-    private static async Task AssertNoCompilationErrorsAsync(Solution solution)
+    private static async Task AssertNoCompilationErrorsAsync(Project project, Func<Project, Task<Compilation?>> getCompilation)
     {
-        foreach (var project in solution.Projects)
+        var compilation = await getCompilation(project);
+        if (compilation is null) return;
+
+        var errors = compilation.GetDiagnostics()
+            .Where(d => d.Severity == DiagnosticSeverity.Error)
+            .ToList();
+
+        if (errors.Count > 0)
         {
-            var compilation = await project.GetCompilationAsync();
-            if (compilation is null) continue;
+            var messages = string.Join("\n", errors.Select(e =>
+                $"[{e.Id}] {e.GetMessage()} @ {e.Location.GetLineSpan().Path}:{e.Location.GetLineSpan().StartLinePosition.Line + 1}"));
 
-            var errors = compilation.GetDiagnostics()
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .ToList();
-
-            if (errors.Count > 0)
-            {
-                var messages = string.Join("\n", errors.Select(e =>
-                    $"[{e.Id}] {e.GetMessage()} @ {e.Location.GetLineSpan().Path}:{e.Location.GetLineSpan().StartLinePosition.Line + 1}"));
-
-                throw new InvalidOperationException(
-                    $"Rename aborted: {project.Name} has compilation errors:\n{messages}");
-            }
+            throw new InvalidOperationException(
+                $"Rename aborted: {project.Name} has compilation errors:\n{messages}");
         }
     }
 }

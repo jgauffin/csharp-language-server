@@ -101,7 +101,7 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
                 () => DiagnosticsTools.GetDiagnosticsAsync(workspace.Solution, filePath),
                 TextFormatter.Format)
             : Safe(
-                () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take),
+                () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take, workspace.GetCompilationAsync),
                 TextFormatter.Format);
 
     [McpServerTool, Description("Rename a symbol across all projects. Set preview=true (default) to preview impact without writing. Set preview=false to execute the rename and write to disk. line/column must point to the identifier (1-based). Use find or get_outline to locate symbols.")]

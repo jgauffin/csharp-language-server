@@ -34,8 +34,11 @@ public static class DiagnosticsTools
         string? projectName = null,
         string? minSeverity = null,
         int skip = 0,
-        int take = 100)
+        int take = 100,
+        Func<Project, Task<Compilation?>>? getCompilation = null)
     {
+        getCompilation ??= p => p.GetCompilationAsync();
+
         var projects = projectName is not null
             ? solution.Projects.Where(p => ProjectTools.MatchesPattern(p.Name, projectName))
             : solution.Projects;
@@ -46,7 +49,7 @@ public static class DiagnosticsTools
 
         foreach (var project in projects)
         {
-            var compilation = await project.GetCompilationAsync();
+            var compilation = await getCompilation(project);
             if (compilation is null) continue;
 
             var diags = compilation.GetDiagnostics()

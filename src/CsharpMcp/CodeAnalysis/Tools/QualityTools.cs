@@ -35,9 +35,9 @@ public record QualityComparison(
 public static class QualityTools
 {
     public static async Task<QualitySnapshot> CaptureSnapshotAsync(
-        Solution solution, CodeAnalysisAgent agent)
+        Solution solution, CodeAnalysisAgent agent, Func<Project, Task<Compilation?>>? getCompilation = null)
     {
-        var diagnosticsTask = DiagnosticsTools.GetAllDiagnosticsAsync(solution);
+        var diagnosticsTask = DiagnosticsTools.GetAllDiagnosticsAsync(solution, getCompilation: getCompilation);
         var metricsTask = agent.GetWorstTypes(solution, skip: 0, take: 50);
 
         await Task.WhenAll(diagnosticsTask, metricsTask);

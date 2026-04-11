@@ -620,33 +620,42 @@ public static class TextFormatter
 
     // ISO 5055 report
 
-    public static string FormatIso5055Report(dynamic report)
+    public static string FormatIso5055Report(dynamic report, int maxViolationsPerCategory = 20)
     {
         var sb = new StringBuilder();
         sb.Append("ISO 5055 Report  LOC: ").Append(report.TotalLinesOfCode)
           .Append("  Covered CWEs: ").AppendLine(string.Join(", ", report.CoveredCweIds));
         sb.AppendLine();
 
-        AppendIso5055Category(sb, "Security", report.Security);
-        AppendIso5055Category(sb, "Reliability", report.Reliability);
-        AppendIso5055Category(sb, "Performance Efficiency", report.PerformanceEfficiency);
-        AppendIso5055Category(sb, "Maintainability", report.Maintainability);
+        AppendIso5055Category(sb, "Security", report.Security, maxViolationsPerCategory);
+        AppendIso5055Category(sb, "Reliability", report.Reliability, maxViolationsPerCategory);
+        AppendIso5055Category(sb, "Performance Efficiency", report.PerformanceEfficiency, maxViolationsPerCategory);
+        AppendIso5055Category(sb, "Maintainability", report.Maintainability, maxViolationsPerCategory);
 
         return sb.ToString().TrimEnd();
     }
 
-    private static void AppendIso5055Category(StringBuilder sb, string name, dynamic category)
+    private static void AppendIso5055Category(StringBuilder sb, string name, dynamic category, int maxViolations)
     {
+        var totalCount = (int)category.ViolationCount;
+
         sb.Append("## ").AppendLine(name);
-        sb.Append("  Violations: ").Append(category.ViolationCount)
+        sb.Append("  Violations: ").Append(totalCount)
           .Append("  Per KLOC: ").Append(((double)category.ViolationsPerKloc).ToString("F2"))
           .Append("  Pass: ").AppendLine(((bool)category.Passes).ToString());
 
+        var shown = 0;
         foreach (var v in category.Violations)
         {
+            if (shown >= maxViolations)
+            {
+                sb.Append("  ... and ").Append(totalCount - maxViolations).AppendLine(" more (increase maxViolationsPerCategory to see all)");
+                break;
+            }
             sb.Append("  [").Append(string.Join(",", v.CweIds)).Append("] ")
               .Append((string)v.FilePath).Append(": ").Append((string)v.Title)
               .Append(" — ").AppendLine((string)v.Suggestion);
+            shown++;
         }
         sb.AppendLine();
     }

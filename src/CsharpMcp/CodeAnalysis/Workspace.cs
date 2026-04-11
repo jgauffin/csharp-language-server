@@ -23,6 +23,15 @@ public sealed class RoslynWorkspace : IDisposable
     private Solution _currentSolution;
     private volatile bool _fullResyncNeeded;
 
+    // Cache compilations keyed by (ProjectId, dependent version stamp).
+    // Survives across solution snapshots so unchanged projects aren't recompiled
+    // after unrelated file edits.
+    private readonly ConcurrentDictionary<ProjectId, (VersionStamp Version, Compilation Compilation)> _compilationCache = new();
+
+    // Per-project locks to prevent concurrent compilations of the same project.
+    // Without this, parallel tool calls each trigger their own compilation.
+    private readonly ConcurrentDictionary<ProjectId, SemaphoreSlim> _compilationLocks = new();
+
     // projectName (no extension) -> Project
     private readonly Dictionary<string, Project> _projects = new(StringComparer.OrdinalIgnoreCase);
 
@@ -138,6 +147,7 @@ public sealed class RoslynWorkspace : IDisposable
     private void FullResync()
     {
         _logger.LogInformation("Performing full resync of all .cs files");
+        _compilationCache.Clear();
 
         var solution = _currentSolution;
 
@@ -285,6 +295,51 @@ public sealed class RoslynWorkspace : IDisposable
             ApplyPendingChanges();
             lock (_lock) return _currentSolution;
         }
+    }
+
+    /// <summary>
+    /// Returns a (possibly cached) compilation for the given project.
+    /// The cache key includes the project's transitive dependency version,
+    /// so a cache hit means neither this project nor any of its dependencies
+    /// have changed since the last compilation.
+    /// Uses per-project locking so concurrent callers share one compilation
+    /// instead of each triggering their own.
+    /// </summary>
+    public async Task<Compilation?> GetCompilationAsync(Project project)
+    {
+        var version = await project.GetDependentVersionAsync();
+
+        if (_compilationCache.TryGetValue(project.Id, out var cached) && cached.Version == version)
+            return cached.Compilation;
+
+        var sem = _compilationLocks.GetOrAdd(project.Id, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync();
+        try
+        {
+            // Re-check after acquiring lock — another caller may have compiled while we waited
+            if (_compilationCache.TryGetValue(project.Id, out cached) && cached.Version == version)
+                return cached.Compilation;
+
+            var compilation = await project.GetCompilationAsync();
+            if (compilation is not null)
+                _compilationCache[project.Id] = (version, compilation);
+            return compilation;
+        }
+        finally
+        {
+            sem.Release();
+        }
+    }
+
+    /// <summary>
+    /// Pre-compiles all projects so that subsequent tool calls hit the cache.
+    /// Call after workspace load to avoid paying compilation cost on first tool use.
+    /// </summary>
+    public async Task WarmCompilationsAsync()
+    {
+        var solution = Solution;
+        await Task.WhenAll(solution.Projects.Select(GetCompilationAsync));
+        _logger.LogInformation("Warmed compilations for {Count} projects", solution.Projects.Count());
     }
 
     /// <summary>

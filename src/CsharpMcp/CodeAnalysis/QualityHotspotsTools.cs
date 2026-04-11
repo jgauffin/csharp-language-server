@@ -38,19 +38,23 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         logger.LogInformation("Tool quality_hotspots invoked");
         try
         {
+            // Capture solution once so all sub-tasks share the same snapshot
+            // (avoids redundant compilations from diverging snapshots)
+            var solution = workspace.Solution;
+
             // Handle snapshot comparison mode
             if (compareToSnapshot != null)
             {
                 if (!Snapshots.TryGetValue(compareToSnapshot, out var baseline))
                     return $"Unknown snapshot label '{compareToSnapshot}'. Call quality_hotspots with snapshotLabel first.";
-                var current = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+                var current = await QualityTools.CaptureSnapshotAsync(solution, agent, workspace.GetCompilationAsync);
                 return TextFormatter.Format(QualityTools.CompareSnapshots(baseline, current));
             }
 
             // Handle snapshot capture mode
             if (snapshotLabel != null)
             {
-                var snapshot = await QualityTools.CaptureSnapshotAsync(workspace.Solution, agent);
+                var snapshot = await QualityTools.CaptureSnapshotAsync(solution, agent, workspace.GetCompilationAsync);
                 Snapshots[snapshotLabel] = snapshot;
                 return TextFormatter.FormatSnapshot(snapshotLabel, snapshot);
             }
@@ -64,10 +68,10 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             var iw = indirectionWeight / totalWeight;
 
             // Run all analyses in parallel (always run, filter by weight later)
-            var metricsTask = agent.GetWorstTypes(workspace.Solution, projectName: projectName, skip: 0, take: 200);
-            var duplicationTask = agent.DetectDuplication(workspace.Solution, projectName: projectName, skip: 0, take: 200);
-            var opacityTask = agent.FindNeedsDocsOrRefactor(workspace.Solution, projectName: projectName, skip: 0, take: 200);
-            var indirectionTask = IndirectionTools.FindIndirectionHotspotsAsync(workspace.Solution, projectName, skip: 0, take: 200);
+            var metricsTask = agent.GetWorstTypes(solution, projectName: projectName, skip: 0, take: 200);
+            var duplicationTask = agent.DetectDuplication(solution, projectName: projectName, skip: 0, take: 200);
+            var opacityTask = agent.FindNeedsDocsOrRefactor(solution, projectName: projectName, skip: 0, take: 200);
+            var indirectionTask = IndirectionTools.FindIndirectionHotspotsAsync(solution, projectName, skip: 0, take: 200);
 
             await Task.WhenAll(metricsTask, duplicationTask, opacityTask, indirectionTask);
 
@@ -177,7 +181,8 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
     }
 
     [McpServerTool, Description("Generate an ISO 5055 automated source code quality report. Analyzes security, reliability, performance efficiency, and maintainability. Returns violation counts, violations per KLOC, pass/fail status, and covered CWE IDs with per-violation details.")]
-    public async Task<string> generate_iso5055_report()
+    public async Task<string> generate_iso5055_report(
+        [Description("Max violations to show per category (default 20). Summary counts always reflect the full analysis.")] int maxViolationsPerCategory = 20)
     {
         logger.LogInformation("Tool generate_iso5055_report invoked");
         try
@@ -186,8 +191,11 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             var symbolRules = AllRules.GetSymbolRules();
             var inspector = new NodeReviewer(syntaxRules, symbolRules);
             var allRules = syntaxRules.Cast<IEvaluation>().Concat(symbolRules);
-            var result = await agent.GenerateIso5055Report(inspector, allRules);
-            return TextFormatter.FormatIso5055Report(result);
+            // Pass solution explicitly so it shares the same snapshot (and compilations)
+            // as other tools running in parallel, instead of falling back to the
+            // stale MSBuildWorkspace.CurrentSolution.
+            var result = await agent.GenerateIso5055Report(inspector, allRules, workspace.Solution);
+            return TextFormatter.FormatIso5055Report(result, maxViolationsPerCategory);
         }
         catch (Exception ex)
         {

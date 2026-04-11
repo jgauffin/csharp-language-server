@@ -11,6 +11,7 @@ var config = ServerConfig.Parse(args);
 // Build a temporary logger factory for workspace loading (before host is built)
 using var earlyLoggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
 var workspace = await RoslynWorkspace.LoadAsync(config.RootPath, earlyLoggerFactory);
+await workspace.WarmCompilationsAsync();
 
 var modelDir = config.ModelDir
     ?? @"D:\src\External\ArchiMetrics\models\unixcoder\";
