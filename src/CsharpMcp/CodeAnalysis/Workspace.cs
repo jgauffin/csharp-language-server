@@ -23,6 +23,17 @@ public sealed class RoslynWorkspace : IDisposable
     private Solution _currentSolution;
     private volatile bool _fullResyncNeeded;
 
+    // Background loading state. Tools check IsReady before touching the solution so
+    // MCP requests return a fast "still loading" response instead of timing out.
+    // Readiness flips true once projects are loaded; compilation warming continues in
+    // the background after that — tools work without it, they just pay first-call cost.
+    private volatile bool _isReady;
+    private volatile bool _isWarmed;
+    private int _loadedProjects;
+    private int _totalProjects;
+    private volatile string? _loadError;
+    private Task _readyTask = Task.CompletedTask;
+
     // Cache compilations keyed by (ProjectId, dependent version stamp).
     // Survives across solution snapshots so unchanged projects aren't recompiled
     // after unrelated file edits.
@@ -46,6 +57,27 @@ public sealed class RoslynWorkspace : IDisposable
 
     public string RootPath { get; }
     public Workspace InnerWorkspace => _workspace;
+
+    public bool IsReady => _isReady;
+    public Task WhenReady => _readyTask;
+    public string LoadingStatus
+    {
+        get
+        {
+            if (_loadError is not null) return $"Workspace load failed: {_loadError}";
+            if (_isReady)
+            {
+                return _isWarmed
+                    ? $"Workspace ready ({_totalProjects} projects loaded, compilations warmed)"
+                    : $"Workspace ready ({_totalProjects} projects loaded, compilations warming in background)";
+            }
+            var total = _totalProjects;
+            var loaded = _loadedProjects;
+            return total == 0
+                ? "Workspace loading: discovering projects..."
+                : $"Workspace loading: {loaded}/{total} projects loaded";
+        }
+    }
 
     private RoslynWorkspace(MSBuildWorkspace workspace, string rootPath, ILogger<RoslynWorkspace> logger)
     {
@@ -226,53 +258,110 @@ public sealed class RoslynWorkspace : IDisposable
         return best;
     }
 
-    public static async Task<RoslynWorkspace> LoadAsync(string rootPath, ILoggerFactory? loggerFactory = null, Func<string, bool>? projectFilter = null)
+    /// <summary>
+    /// Creates the workspace and kicks off project loading + compilation warming on a background task.
+    /// Returns immediately so MCP can start serving requests; tools check <see cref="IsReady"/> and
+    /// return a "still loading" response until the background task completes.
+    /// </summary>
+    public static RoslynWorkspace Create(string rootPath, ILoggerFactory? loggerFactory = null, Func<string, bool>? projectFilter = null)
     {
         var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RoslynWorkspace>();
         var workspace = MSBuildWorkspace.Create();
         var instance = new RoslynWorkspace(workspace, rootPath, logger);
-
-        var filter = projectFilter ?? (p => !IsBuildOutputPath(p));
-        var csprojFiles = Directory.GetFiles(rootPath, "*.csproj", SearchOption.AllDirectories)
-            .Where(filter)
-            .ToArray();
-        logger.LogInformation("Found {Count} .csproj files under {RootPath}", csprojFiles.Length, rootPath);
-
-        foreach (var path in csprojFiles)
-        {
-            var fullPath = Path.GetFullPath(path);
-            var alreadyLoaded = workspace.CurrentSolution.Projects
-                .Any(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
-
-            Project project;
-            if (alreadyLoaded)
-            {
-                project = workspace.CurrentSolution.Projects
-                    .First(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
-                logger.LogDebug("Project already loaded: {ProjectPath}", fullPath);
-            }
-            else
-            {
-                logger.LogInformation("Loading project: {ProjectPath}", fullPath);
-                project = await workspace.OpenProjectAsync(path);
-                logger.LogInformation("Loaded project {ProjectName} with {DocCount} documents",
-                    project.Name, project.Documents.Count());
-            }
-
-            var name = Path.GetFileNameWithoutExtension(path);
-            instance._projects[name] = project;
-        }
-
-        // Sync our snapshot with the fully-loaded workspace solution
-        instance._currentSolution = workspace.CurrentSolution;
-
-        foreach (var diag in workspace.Diagnostics)
-        {
-            logger.LogWarning("MSBuild: {Message}", diag.Message);
-        }
-
-        logger.LogInformation("Workspace ready: {ProjectCount} projects loaded", instance._projects.Count);
+        instance._readyTask = Task.Run(() => instance.LoadInBackgroundAsync(projectFilter));
         return instance;
+    }
+
+    /// <summary>
+    /// Creates the workspace and awaits full project load + compilation warming before returning.
+    /// Use <see cref="Create"/> in production to avoid blocking MCP startup; this overload is kept
+    /// for tests and tooling that need a fully-loaded workspace synchronously.
+    /// </summary>
+    public static async Task<RoslynWorkspace> LoadAsync(string rootPath, ILoggerFactory? loggerFactory = null, Func<string, bool>? projectFilter = null)
+    {
+        var instance = Create(rootPath, loggerFactory, projectFilter);
+        await instance.WhenReady;
+        return instance;
+    }
+
+    private async Task LoadInBackgroundAsync(Func<string, bool>? projectFilter)
+    {
+        try
+        {
+            var filter = projectFilter ?? (p => !IsBuildOutputPath(p));
+            var csprojFiles = Directory.GetFiles(RootPath, "*.csproj", SearchOption.AllDirectories)
+                .Where(filter)
+                .ToArray();
+            _totalProjects = csprojFiles.Length;
+            _logger.LogInformation("Found {Count} .csproj files under {RootPath}", csprojFiles.Length, RootPath);
+
+            foreach (var path in csprojFiles)
+            {
+                var fullPath = Path.GetFullPath(path);
+                var alreadyLoaded = _workspace.CurrentSolution.Projects
+                    .Any(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+
+                Project project;
+                if (alreadyLoaded)
+                {
+                    project = _workspace.CurrentSolution.Projects
+                        .First(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+                    _logger.LogDebug("Project already loaded: {ProjectPath}", fullPath);
+                }
+                else
+                {
+                    _logger.LogInformation("Loading project: {ProjectPath}", fullPath);
+                    project = await _workspace.OpenProjectAsync(path).ConfigureAwait(false);
+                    _logger.LogInformation("Loaded project {ProjectName} with {DocCount} documents",
+                        project.Name, project.Documents.Count());
+                }
+
+                var name = Path.GetFileNameWithoutExtension(path);
+                lock (_lock)
+                {
+                    _projects[name] = project;
+                }
+                Interlocked.Increment(ref _loadedProjects);
+            }
+
+            lock (_lock)
+            {
+                _currentSolution = _workspace.CurrentSolution;
+            }
+
+            foreach (var diag in _workspace.Diagnostics)
+            {
+                _logger.LogWarning("MSBuild: {Message}", diag.Message);
+            }
+
+            _isReady = true;
+            _logger.LogInformation("Workspace ready: {ProjectCount} projects loaded, warming compilations in background", _projects.Count);
+
+            // Fire-and-forget compilation warming. Tools don't need this to be complete;
+            // they just pay the compilation cost on first use without it.
+            _ = Task.Run(WarmCompilationsInBackgroundAsync);
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+            _logger.LogError(ex, "Workspace background load failed");
+            throw;
+        }
+    }
+
+    private async Task WarmCompilationsInBackgroundAsync()
+    {
+        try
+        {
+            var solution = _currentSolution;
+            await Task.WhenAll(solution.Projects.Select(GetCompilationAsync)).ConfigureAwait(false);
+            _isWarmed = true;
+            _logger.LogInformation("Warmed compilations for {Count} projects", solution.Projects.Count());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Compilation warming failed (non-fatal — tools still work, just slower on first use)");
+        }
     }
 
     /// <summary>Returns the named project, or throws if not found.</summary>

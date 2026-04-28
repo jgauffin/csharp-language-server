@@ -36,6 +36,8 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         int take = 50)
     {
         logger.LogInformation("Tool quality_hotspots invoked");
+        if (!workspace.IsReady)
+            return $"{workspace.LoadingStatus}. Please retry in a moment.";
         try
         {
             // Capture solution once so all sub-tasks share the same snapshot
@@ -67,11 +69,13 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             var ow = opacityWeight / totalWeight;
             var iw = indirectionWeight / totalWeight;
 
-            // Run all analyses in parallel (always run, filter by weight later)
-            var metricsTask = agent.GetWorstTypes(solution, projectName: projectName, skip: 0, take: 200);
-            var duplicationTask = agent.DetectDuplication(solution, projectName: projectName, skip: 0, take: 200);
-            var opacityTask = agent.FindNeedsDocsOrRefactor(solution, projectName: projectName, skip: 0, take: 200);
-            var indirectionTask = IndirectionTools.FindIndirectionHotspotsAsync(solution, projectName, skip: 0, take: 200);
+            // Run all analyses in parallel. Each dimension is independent — a failure in one
+            // (e.g. opacity requires an IEmbeddingProvider which isn't configured unless the
+            // ONNX model directory exists) shouldn't nuke the whole tool.
+            var metricsTask = SafeDimension(() => agent.GetWorstTypes(solution, projectName: projectName, skip: 0, take: 200), "maintainability");
+            var duplicationTask = SafeDimension(() => agent.DetectDuplication(solution, projectName: projectName, skip: 0, take: 200), "duplication");
+            var opacityTask = SafeDimension(() => agent.FindNeedsDocsOrRefactor(solution, projectName: projectName, skip: 0, take: 200), "opacity");
+            var indirectionTask = SafeDimension(() => IndirectionTools.FindIndirectionHotspotsAsync(solution, projectName, skip: 0, take: 200), "indirection");
 
             await Task.WhenAll(metricsTask, duplicationTask, opacityTask, indirectionTask);
 
@@ -85,7 +89,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
 
             // 1. Maintainability: normalize MI (0-100 scale, lower=worse → invert to 0-1 where 1=worst)
             // MI >= 50 is average-or-better → score <= 0.50, skip those
-            if (metrics.Items.Count > 0)
+            if (metrics?.Items.Count > 0)
             {
                 foreach (var t in metrics.Items)
                 {
@@ -99,7 +103,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             }
 
             // 2. Duplication: score by number of instances in clone groups
-            if (duplication.Items.Count > 0)
+            if (duplication?.Items.Count > 0)
             {
                 foreach (var clone in duplication.Items)
                 {
@@ -119,7 +123,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             }
 
             // 3. Opacity: already 0-1 scale
-            if (opacity.Items.Count > 0)
+            if (opacity?.Items.Count > 0)
             {
                 foreach (var c in opacity.Items)
                 {
@@ -135,7 +139,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             }
 
             // 4. Indirection: normalize by max score in set
-            if (indirection.Items.Count > 0)
+            if (indirection?.Items.Count > 0)
             {
                 var maxIndirectionScore = indirection.Items.Max(o => o.Score);
                 if (maxIndirectionScore <= 0) maxIndirectionScore = 1;
@@ -185,6 +189,8 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         [Description("Max violations to show per category (default 20). Summary counts always reflect the full analysis.")] int maxViolationsPerCategory = 20)
     {
         logger.LogInformation("Tool generate_iso5055_report invoked");
+        if (!workspace.IsReady)
+            return $"{workspace.LoadingStatus}. Please retry in a moment.";
         try
         {
             var syntaxRules = AllRules.GetSyntaxRules(spellChecker: null);
@@ -201,6 +207,19 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         {
             logger.LogWarning(ex, "Tool generate_iso5055_report failed");
             return $"Error: {ex.GetType().Name}: {ex.Message}";
+        }
+    }
+
+    private async Task<T?> SafeDimension<T>(Func<Task<T>> action, string dimension) where T : class
+    {
+        try
+        {
+            return await action();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Quality dimension '{Dimension}' failed and will be skipped", dimension);
+            return null;
         }
     }
 

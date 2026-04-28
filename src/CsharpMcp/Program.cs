@@ -10,8 +10,9 @@ var config = ServerConfig.Parse(args);
 
 // Build a temporary logger factory for workspace loading (before host is built)
 using var earlyLoggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
-var workspace = await RoslynWorkspace.LoadAsync(config.RootPath, earlyLoggerFactory);
-await workspace.WarmCompilationsAsync();
+// Load in the background so the MCP server can start responding immediately.
+// Tools check workspace.IsReady and return a "still loading" response until load completes.
+var workspace = RoslynWorkspace.Create(config.RootPath, earlyLoggerFactory);
 
 var modelDir = config.ModelDir
     ?? @"D:\src\External\ArchiMetrics\models\unixcoder\";

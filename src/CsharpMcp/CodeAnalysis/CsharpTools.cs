@@ -156,6 +156,11 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
     private async Task<string> Safe<T>(Func<Task<T>> action, Func<T, string> format, [CallerMemberName] string tool = "")
     {
         logger.LogInformation("Tool {Tool} invoked", tool);
+        if (!workspace.IsReady)
+        {
+            logger.LogInformation("Tool {Tool} rejected: {Status}", tool, workspace.LoadingStatus);
+            return $"{workspace.LoadingStatus}. Please retry in a moment.";
+        }
         try
         {
             var result = await action();
