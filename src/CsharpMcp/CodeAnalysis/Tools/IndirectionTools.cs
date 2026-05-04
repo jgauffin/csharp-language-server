@@ -119,10 +119,15 @@ public static class IndirectionTools
                     else if (node is MemberAccessExpressionSyntax)
                     {
                         var sym = model.GetSymbolInfo(node).Symbol;
-                        if (sym is IPropertySymbol or IFieldSymbol)
-                            callee = sym;
-                        else
+                        var memberType = sym switch
+                        {
+                            IPropertySymbol p => p.Type,
+                            IFieldSymbol f => f.Type,
+                            _ => null
+                        };
+                        if (memberType is null || !ExposesDomainType(memberType))
                             continue;
+                        callee = sym;
                     }
                     else
                     {
@@ -178,6 +183,40 @@ public static class IndirectionTools
             symbol.Kind.ToString(),
             symbol.ContainingType?.ToDisplayString() ?? "",
             location);
+    }
+
+    private static bool ExposesDomainType(ITypeSymbol type)
+    {
+        // Unwrap Nullable<T>
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            type = nullable.TypeArguments[0];
+
+        // Unwrap arrays and System.Collections.* generics (Dictionary<K,V> -> V, List<T> -> T)
+        if (type is IArrayTypeSymbol array)
+        {
+            type = array.ElementType;
+        }
+        else if (type is INamedTypeSymbol { IsGenericType: true } generic
+            && generic.ContainingNamespace?.ToDisplayString().StartsWith("System.Collections", StringComparison.Ordinal) == true)
+        {
+            type = generic.TypeArguments[^1];
+        }
+
+        // Re-unwrap Nullable in case the element type was Nullable<T>
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable2)
+            type = nullable2.TypeArguments[0];
+
+        if (type.TypeKind == TypeKind.Enum) return false;
+
+        // Catches all primitives, String, Object, DateTime, IntPtr, etc.
+        if (type.SpecialType != SpecialType.None) return false;
+
+        // Skip Guid, TimeSpan, DateTimeOffset, Uri, DateOnly, TimeOnly, Task<T>, etc.
+        var ns = type.ContainingNamespace?.ToDisplayString() ?? "";
+        if (ns == "System" || ns.StartsWith("System.", StringComparison.Ordinal))
+            return false;
+
+        return true;
     }
 
     private static bool ShouldSkipFile(string filePath, bool includeTests)
