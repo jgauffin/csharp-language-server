@@ -8,6 +8,14 @@ using ModelContextProtocol.Protocol;
 
 var config = ServerConfig.Parse(args);
 
+// Refuse to start in a non-.NET directory before any heavy init (MSBuildLocator,
+// MSBuildWorkspace, ONNX model). Scanning a non-.NET tree was costing ~8GB RAM.
+if (!HasDotNetProject(config.RootPath))
+{
+    Console.Error.WriteLine($"csharp-language-mcp: no .csproj or .sln found under '{config.RootPath}'. Refusing to start in a non-.NET directory.");
+    return 1;
+}
+
 // Build a temporary logger factory for workspace loading (before host is built)
 using var earlyLoggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
 // Load in the background so the MCP server can start responding immediately.
@@ -44,3 +52,27 @@ if (config.EnableNuget)
     services.WithTools<CsharpMcp.Nuget.NugetTools>();
 
 await builder.Build().RunAsync();
+return 0;
+
+static bool HasDotNetProject(string rootPath)
+{
+    var enumOpts = new EnumerationOptions
+    {
+        RecurseSubdirectories = true,
+        IgnoreInaccessible = true,
+        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
+        MatchType = MatchType.Simple,
+    };
+
+    foreach (var pattern in new[] { "*.csproj", "*.sln", "*.slnx", "*.slnf" })
+    {
+        foreach (var path in Directory.EnumerateFiles(rootPath, pattern, enumOpts))
+        {
+            var norm = path.Replace('\\', '/');
+            if (norm.Contains("/bin/") || norm.Contains("/obj/") || norm.Contains("/node_modules/"))
+                continue;
+            return true;
+        }
+    }
+    return false;
+}
