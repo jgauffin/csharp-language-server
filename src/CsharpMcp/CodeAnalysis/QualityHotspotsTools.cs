@@ -19,16 +19,15 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
     private const double DefaultMinScore = 0.10;
 
     [McpServerTool, Description(
-        "Find code hotspots that need refactoring. Weights four quality dimensions — maintainability (MI, CC, LOC), " +
-        "duplication (code clones), opacity (hard-to-understand methods), and indirection (hidden coupling) — " +
-        "into a composite score. Returns only items above the minimum score threshold. " +
+        "Find code hotspots that need refactoring. Weights three quality dimensions — maintainability (MI, CC, LOC), " +
+        "duplication (code clones), and indirection (hidden coupling) — into a composite score. " +
+        "Returns only items above the minimum score threshold. " +
         "Use snapshotLabel to capture a baseline before changes, then compareToSnapshot to see impact.")]
     public async Task<string> quality_hotspots(
         [Description("Filter to a specific project (glob or substring)")] string? projectName = null,
-        [Description("Weight for maintainability index (0.0-1.0, default 0.25)")] double maintainabilityWeight = 0.25,
-        [Description("Weight for code duplication (0.0-1.0, default 0.25)")] double duplicationWeight = 0.25,
-        [Description("Weight for code opacity/readability (0.0-1.0, default 0.25)")] double opacityWeight = 0.25,
-        [Description("Weight for indirection/coupling (0.0-1.0, default 0.25)")] double indirectionWeight = 0.25,
+        [Description("Weight for maintainability index (0.0-1.0, default 0.34)")] double maintainabilityWeight = 0.34,
+        [Description("Weight for code duplication (0.0-1.0, default 0.33)")] double duplicationWeight = 0.33,
+        [Description("Weight for indirection/coupling (0.0-1.0, default 0.33)")] double indirectionWeight = 0.33,
         [Description("Minimum composite score to include (0.0-1.0, default 0.10). Filters out average-or-better code.")] double minScore = DefaultMinScore,
         [Description("Capture or reference a named snapshot for before/after comparison")] string? snapshotLabel = null,
         [Description("Compare current state against this snapshot label")] string? compareToSnapshot = null,
@@ -62,26 +61,22 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             }
 
             // Normalize weights
-            var totalWeight = maintainabilityWeight + duplicationWeight + opacityWeight + indirectionWeight;
+            var totalWeight = maintainabilityWeight + duplicationWeight + indirectionWeight;
             if (totalWeight <= 0) totalWeight = 1.0;
             var mw = maintainabilityWeight / totalWeight;
             var dw = duplicationWeight / totalWeight;
-            var ow = opacityWeight / totalWeight;
             var iw = indirectionWeight / totalWeight;
 
             // Run all analyses in parallel. Each dimension is independent — a failure in one
-            // (e.g. opacity requires an IEmbeddingProvider which isn't configured unless the
-            // ONNX model directory exists) shouldn't nuke the whole tool.
+            // shouldn't nuke the whole tool.
             var metricsTask = SafeDimension(() => agent.GetWorstTypes(solution, projectName: projectName, skip: 0, take: 200), "maintainability");
             var duplicationTask = SafeDimension(() => agent.DetectDuplication(solution, projectName: projectName, skip: 0, take: 200), "duplication");
-            var opacityTask = SafeDimension(() => agent.FindNeedsDocsOrRefactor(solution, projectName: projectName, skip: 0, take: 200), "opacity");
             var indirectionTask = SafeDimension(() => IndirectionTools.FindIndirectionHotspotsAsync(solution, projectName, skip: 0, take: 200), "indirection");
 
-            await Task.WhenAll(metricsTask, duplicationTask, opacityTask, indirectionTask);
+            await Task.WhenAll(metricsTask, duplicationTask, indirectionTask);
 
             var metrics = metricsTask.Result;
             var duplication = duplicationTask.Result;
-            var opacity = opacityTask.Result;
             var indirection = indirectionTask.Result;
 
             // Build hotspot entries keyed by identifier
@@ -122,23 +117,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
                 }
             }
 
-            // 3. Opacity: already 0-1 scale
-            if (opacity?.Items.Count > 0)
-            {
-                foreach (var c in opacity.Items)
-                {
-                    var score = Math.Clamp(c.OpacityScore, 0, 1);
-                    if (score < minScore) continue;
-                    var key = c.MemberName ?? $"{c.FilePath}:{c.LineNumber}";
-                    var entry = GetOrCreate(hotspots, key, "Method");
-                    entry.FilePath ??= c.FilePath;
-                    entry.Line ??= c.LineNumber;
-                    entry.OpacityScore = score;
-                    entry.Details.Add($"Opacity:{c.OpacityScore:F2} CC:{c.CyclomaticComplexity} Nesting:{c.NestingDepth}");
-                }
-            }
-
-            // 4. Indirection: normalize by max score in set
+            // 3. Indirection: normalize by max score in set
             if (indirection?.Items.Count > 0)
             {
                 var maxIndirectionScore = indirection.Items.Max(o => o.Score);
@@ -162,7 +141,6 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
                 entry.CompositeScore =
                     entry.MaintainabilityScore * mw +
                     entry.DuplicationScore * dw +
-                    entry.OpacityScore * ow +
                     entry.IndirectionScore * iw;
             }
 
@@ -175,7 +153,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
 
             var filteredOutCount = hotspots.Count - hotspots.Values.Count(e => e.CompositeScore >= minScore);
 
-            return FormatHotspots(ranked, ranked.Count + filteredOutCount, filteredOutCount, minScore, mw, dw, ow, iw);
+            return FormatHotspots(ranked, ranked.Count + filteredOutCount, filteredOutCount, minScore, mw, dw, iw);
         }
         catch (Exception ex)
         {
@@ -233,7 +211,7 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         return entry;
     }
 
-    private static string FormatHotspots(List<HotspotEntry> ranked, int totalCount, int filteredOut, double minScore, double mw, double dw, double ow, double iw)
+    private static string FormatHotspots(List<HotspotEntry> ranked, int totalCount, int filteredOut, double minScore, double mw, double dw, double iw)
     {
         if (ranked.Count == 0)
             return filteredOut > 0
@@ -248,7 +226,6 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         sb.AppendLine(":");
         sb.Append("Weights: MI=").Append(mw.ToString("F2"))
           .Append(" Dup=").Append(dw.ToString("F2"))
-          .Append(" Opacity=").Append(ow.ToString("F2"))
           .Append(" Indirection=").Append(iw.ToString("F2"))
           .AppendLine();
         sb.AppendLine();
@@ -262,7 +239,6 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             sb.Append("  Score: ").Append(e.CompositeScore.ToString("F3"));
             if (e.MaintainabilityScore > 0) sb.Append("  MI: ").Append(e.MaintainabilityScore.ToString("F2"));
             if (e.DuplicationScore > 0) sb.Append("  Dup: ").Append(e.DuplicationScore.ToString("F2"));
-            if (e.OpacityScore > 0) sb.Append("  Opacity: ").Append(e.OpacityScore.ToString("F2"));
             if (e.IndirectionScore > 0) sb.Append("  Indirection: ").Append(e.IndirectionScore.ToString("F2"));
             sb.AppendLine();
             foreach (var detail in e.Details)
@@ -281,7 +257,6 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         public double CompositeScore { get; set; }
         public double MaintainabilityScore { get; set; }
         public double DuplicationScore { get; set; }
-        public double OpacityScore { get; set; }
         public double IndirectionScore { get; set; }
         public List<string> Details { get; } = new();
     }

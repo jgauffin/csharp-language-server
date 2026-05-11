@@ -452,35 +452,6 @@ public static class TextFormatter
         return sb.ToString().TrimEnd();
     }
 
-    // Needs docs or refactor
-
-    public static string Format(PagedResult<NeedsDocsOrRefactorCandidate> result)
-    {
-        if (result.Items.Count == 0) return "No candidates found — code looks clean.";
-        var sb = new StringBuilder();
-        sb.Append("Showing ").Append(result.Items.Count).Append(" of ").Append(result.TotalCount)
-          .AppendLine(" candidate(s), sorted by worst opacity:");
-        sb.AppendLine();
-        foreach (var c in result.Items)
-        {
-            sb.Append(c.FilePath).Append(':').Append(c.LineNumber)
-              .Append('-').Append(c.EndLineNumber);
-            if (c.MemberName != null)
-                sb.Append(' ').Append(c.MemberName);
-            sb.AppendLine();
-            sb.Append("  Opacity: ").Append(c.OpacityScore.ToString("F2"))
-              .Append("  Name-Body Sim: ").Append(c.NameBodySimilarity.ToString("F2"))
-              .Append("  CC: ").Append(c.CyclomaticComplexity)
-              .Append("  Nesting: ").Append(c.NestingDepth)
-              .Append("  Magic Literals: ").Append(c.MagicLiteralCount)
-              .AppendLine();
-            if (c.Reasons.Count > 0)
-                sb.Append("  Reasons: ").AppendLine(string.Join(", ", c.Reasons));
-            sb.AppendLine();
-        }
-        return sb.ToString().TrimEnd();
-    }
-
     // Quality snapshot confirmation
 
     public static string FormatSnapshot(string label, QualitySnapshot snapshot)

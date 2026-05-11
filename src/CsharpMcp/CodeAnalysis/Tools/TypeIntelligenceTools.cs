@@ -70,8 +70,8 @@ public static class TypeIntelligenceTools
         if (node is null) return null;
 
         var symbolInfo = model.GetSymbolInfo(node);
-        if (symbolInfo.Symbol is not IMethodSymbol method)
-            method = symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+        var method = symbolInfo.Symbol as IMethodSymbol
+            ?? symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
 
         if (method is null) return null;
 

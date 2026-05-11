@@ -22,11 +22,7 @@ using var earlyLoggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinim
 // Tools check workspace.IsReady and return a "still loading" response until load completes.
 var workspace = RoslynWorkspace.Create(config.RootPath, earlyLoggerFactory);
 
-var modelDir = config.ModelDir
-    ?? @"D:\src\External\ArchiMetrics\models\unixcoder\";
-var agent = Directory.Exists(modelDir)
-    ? CodeAnalysisAgent.WithOnnxModel(workspace.InnerWorkspace, config.RootPath, modelDir)
-    : new CodeAnalysisAgent(workspace.InnerWorkspace, config.RootPath);
+var agent = new CodeAnalysisAgent(workspace.InnerWorkspace, config.RootPath);
 
 var builder = Host.CreateApplicationBuilder(args);
 var services = builder.Services
@@ -68,9 +64,7 @@ static bool HasDotNetProject(string rootPath)
     {
         foreach (var path in Directory.EnumerateFiles(rootPath, pattern, enumOpts))
         {
-            var norm = path.Replace('\\', '/');
-            if (norm.Contains("/bin/") || norm.Contains("/obj/") || norm.Contains("/node_modules/"))
-                continue;
+            if (RoslynWorkspace.IsExcludedPath(path)) continue;
             return true;
         }
     }

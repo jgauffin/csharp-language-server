@@ -52,34 +52,16 @@ This matters most for C# because:
 **Claude Code:**
 
 ```bash
-claude mcp add csharp -- dotnet run --project <server>/src/CsharpMcp -- [your-csharp-repo]
+# Analyze the current directory
+claude mcp add csharp -- dotnet run --project <server>/src/CsharpMcp
+
+# Analyze a specific project
+claude mcp add csharp -- dotnet run --project <server>/src/CsharpMcp -- <your-csharp-repo>
 ```
 
-| Placeholder | Meaning |
-|-------------|---------|
-| `<server>` | Path where you cloned this repo |
-| `[your-csharp-repo]` | Path to the C# project you want to analyze (optional, defaults to cwd) |
-| First `--` | Separates `claude mcp add` from the server command |
-| Second `--` | Separates `dotnet run` from the server's own arguments |
+Replace `<server>` with the path to your clone of this repo.
 
-Examples:
-
-```bash
-# Analyze a specific repo
-claude mcp add csharp -- dotnet run --project ~/tools/csharp-language-mcp/src/CsharpMcp -- ~/projects/my-api
-
-# Analyze whichever directory Claude Code is running in (omit the repo path)
-claude mcp add csharp -- dotnet run --project ~/tools/csharp-language-mcp/src/CsharpMcp
-
-# Windows — forward slashes work and avoid quoting issues
-claude mcp add csharp -- dotnet run --project C:/tools/csharp-language-mcp/src/CsharpMcp -- C:/projects/my-api
-
-# Multiple instances with --name and --description
-claude mcp add csharp-api -- dotnet run --project ~/tools/csharp-language-mcp/src/CsharpMcp -- --name csharp-api --description "API layer" ~/projects/my-api
-claude mcp add csharp-core -- dotnet run --project ~/tools/csharp-language-mcp/src/CsharpMcp -- --name csharp-core --description "Core domain" ~/projects/my-core
-```
-
-**Claude Desktop, Cline, etc.:**
+**Other MCP clients (Cline, etc.):**
 
 ```json
 {
@@ -154,7 +136,7 @@ The server discovers all `.csproj` files under the root path and loads them into
 | | `get_code_actions` | Quick fixes for diagnostics (add using, implement interface, etc.) |
 | **Efficiency** | `analyze_position` | Combined hover + diagnostics + symbols in one call |
 | | `batch_analyze` | Analyze multiple positions at once |
-| **Quality** | `quality_hotspots` | Composite quality scoring — finds worst code by weighting MI, duplication, opacity, indirection |
+| **Quality** | `quality_hotspots` | Composite quality scoring — finds worst code by weighting MI, duplication, indirection |
 | | `generate_iso5055_report` | ISO 5055 quality report (security, reliability, performance, maintainability) |
 | **NuGet** | `nuget_search` | Cache-first search, falls back to remote |
 | | `nuget_packages` | List cached packages, or get metadata/deps for a specific package |
@@ -162,14 +144,13 @@ The server discovers all `.csproj` files under the root path and loads them into
 
 ## Quality Hotspots
 
-The `quality_hotspots` tool identifies code that needs refactoring by weighting four quality dimensions:
+The `quality_hotspots` tool identifies code that needs refactoring by weighting three quality dimensions:
 
 - **Maintainability** — MI, cyclomatic complexity, LOC, coupling
 - **Duplication** — exact, renamed, and semantic code clones
-- **Opacity** — hard-to-understand methods (embedding similarity, nesting, magic literals)
 - **Indirection** — hidden coupling through deep call chains
 
-Default weights are equal (0.25 each). Override weights to focus on specific concerns.
+Default weights are roughly equal (≈0.33 each). Override weights to focus on specific concerns.
 
 **Before/after tracking:**
 1. Call `quality_hotspots(snapshotLabel: "before")` at the start of a session

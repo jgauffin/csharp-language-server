@@ -34,10 +34,20 @@ public sealed class RoslynWorkspace : IDisposable
     private volatile string? _loadError;
     private Task _readyTask = Task.CompletedTask;
 
-    // Cache compilations keyed by (ProjectId, dependent version stamp).
-    // Survives across solution snapshots so unchanged projects aren't recompiled
-    // after unrelated file edits.
-    private readonly ConcurrentDictionary<ProjectId, (VersionStamp Version, Compilation Compilation)> _compilationCache = new();
+    // Bounded LRU cache of compilations. Each Compilation pins all parsed syntax trees and
+    // metadata references for its project, so for large solutions this is the biggest
+    // sustained memory cost. Capping the cache at MaxCachedCompilations keeps memory in check;
+    // evicted projects pay a re-compile on next use.
+    private const int MaxCachedCompilations = 8;
+    private sealed class CacheEntry
+    {
+        public VersionStamp Version;
+        public Compilation Compilation = null!;
+        public long LastAccessTick;
+    }
+    private readonly ConcurrentDictionary<ProjectId, CacheEntry> _compilationCache = new();
+    private long _accessTick;
+    private readonly Lock _evictionLock = new();
 
     // Per-project locks to prevent concurrent compilations of the same project.
     // Without this, parallel tool calls each trigger their own compilation.
@@ -92,16 +102,30 @@ public sealed class RoslynWorkspace : IDisposable
             InternalBufferSize = 65536,
             EnableRaisingEvents = true
         };
-        _watcher.Changed += (_, e) => _pendingChanges.Enqueue(new(Path.GetFullPath(e.FullPath), ChangeKind.Updated));
-        _watcher.Created += (_, e) => _pendingChanges.Enqueue(new(Path.GetFullPath(e.FullPath), ChangeKind.Updated));
-        _watcher.Deleted += (_, e) => _pendingChanges.Enqueue(new(Path.GetFullPath(e.FullPath), ChangeKind.Deleted));
-        _watcher.Renamed += (_, e) => _pendingChanges.Enqueue(
-            new(Path.GetFullPath(e.FullPath), ChangeKind.Renamed, Path.GetFullPath(e.OldFullPath)));
+        // Filter at the source: in a mixed-language repo the watcher fires for .cs files
+        // anywhere under root (e.g. inside bin/, obj/, or a transitive node_modules), and we
+        // don't want those swelling the pending queue.
+        _watcher.Changed += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Updated);
+        _watcher.Created += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Updated);
+        _watcher.Deleted += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Deleted);
+        _watcher.Renamed += (_, e) =>
+        {
+            var full = Path.GetFullPath(e.FullPath);
+            if (IsExcludedPath(full)) return;
+            _pendingChanges.Enqueue(new(full, ChangeKind.Renamed, Path.GetFullPath(e.OldFullPath)));
+        };
         _watcher.Error += (_, e) =>
         {
             _logger.LogWarning(e.GetException(), "FileSystemWatcher buffer overflow — scheduling full resync");
             _fullResyncNeeded = true;
         };
+    }
+
+    private void EnqueueIfTracked(string path, ChangeKind kind)
+    {
+        var full = Path.GetFullPath(path);
+        if (IsExcludedPath(full)) return;
+        _pendingChanges.Enqueue(new(full, kind));
     }
 
     /// <summary>
@@ -188,7 +212,7 @@ public sealed class RoslynWorkspace : IDisposable
         foreach (var file in Directory.GetFiles(RootPath, "*.cs", SearchOption.AllDirectories))
         {
             var fullPath = Path.GetFullPath(file);
-            if (IsBuildOutputPath(fullPath)) continue;
+            if (IsExcludedPath(fullPath)) continue;
             diskFiles.Add(fullPath);
         }
 
@@ -288,40 +312,67 @@ public sealed class RoslynWorkspace : IDisposable
     {
         try
         {
-            var filter = projectFilter ?? (p => !IsBuildOutputPath(p));
-            var csprojFiles = Directory.GetFiles(RootPath, "*.csproj", SearchOption.AllDirectories)
-                .Where(filter)
-                .ToArray();
-            _totalProjects = csprojFiles.Length;
-            _logger.LogInformation("Found {Count} .csproj files under {RootPath}", csprojFiles.Length, RootPath);
-
-            foreach (var path in csprojFiles)
+            // Prefer a solution file at the root when present — it's authoritative about which
+            // projects belong to the workspace, avoids a recursive directory walk, and won't
+            // accidentally pick up unrelated csprojs from sibling subtrees.
+            var solutionFile = FindSolutionFile(RootPath);
+            if (solutionFile is not null)
             {
-                var fullPath = Path.GetFullPath(path);
-                var alreadyLoaded = _workspace.CurrentSolution.Projects
-                    .Any(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+                _logger.LogInformation("Loading solution {SolutionPath}", solutionFile);
+                await _workspace.OpenSolutionAsync(solutionFile).ConfigureAwait(false);
 
-                Project project;
-                if (alreadyLoaded)
+                var projects = _workspace.CurrentSolution.Projects.ToArray();
+                _totalProjects = projects.Length;
+                foreach (var project in projects)
                 {
-                    project = _workspace.CurrentSolution.Projects
-                        .First(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
-                    _logger.LogDebug("Project already loaded: {ProjectPath}", fullPath);
+                    var key = project.Name;
+                    if (project.FilePath is not null)
+                        key = Path.GetFileNameWithoutExtension(project.FilePath);
+                    lock (_lock)
+                    {
+                        _projects[key] = project;
+                    }
+                    Interlocked.Increment(ref _loadedProjects);
                 }
-                else
-                {
-                    _logger.LogInformation("Loading project: {ProjectPath}", fullPath);
-                    project = await _workspace.OpenProjectAsync(path).ConfigureAwait(false);
-                    _logger.LogInformation("Loaded project {ProjectName} with {DocCount} documents",
-                        project.Name, project.Documents.Count());
-                }
+                _logger.LogInformation("Loaded {Count} projects from solution", projects.Length);
+            }
+            else
+            {
+                var filter = projectFilter ?? (p => !IsExcludedPath(p));
+                var csprojFiles = Directory.GetFiles(RootPath, "*.csproj", SearchOption.AllDirectories)
+                    .Where(filter)
+                    .ToArray();
+                _totalProjects = csprojFiles.Length;
+                _logger.LogInformation("Found {Count} .csproj files under {RootPath}", csprojFiles.Length, RootPath);
 
-                var name = Path.GetFileNameWithoutExtension(path);
-                lock (_lock)
+                foreach (var path in csprojFiles)
                 {
-                    _projects[name] = project;
+                    var fullPath = Path.GetFullPath(path);
+                    var alreadyLoaded = _workspace.CurrentSolution.Projects
+                        .Any(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+
+                    Project project;
+                    if (alreadyLoaded)
+                    {
+                        project = _workspace.CurrentSolution.Projects
+                            .First(p => string.Equals(p.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+                        _logger.LogDebug("Project already loaded: {ProjectPath}", fullPath);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Loading project: {ProjectPath}", fullPath);
+                        project = await _workspace.OpenProjectAsync(path).ConfigureAwait(false);
+                        _logger.LogInformation("Loaded project {ProjectName} with {DocCount} documents",
+                            project.Name, project.Documents.Count());
+                    }
+
+                    var name = Path.GetFileNameWithoutExtension(path);
+                    lock (_lock)
+                    {
+                        _projects[name] = project;
+                    }
+                    Interlocked.Increment(ref _loadedProjects);
                 }
-                Interlocked.Increment(ref _loadedProjects);
             }
 
             lock (_lock)
@@ -351,12 +402,20 @@ public sealed class RoslynWorkspace : IDisposable
 
     private async Task WarmCompilationsInBackgroundAsync()
     {
+        // Sequential, not parallel: a parallel warm would hold every project's Compilation
+        // in memory simultaneously before the LRU could trim, spiking RAM badly on large
+        // solutions. Sequential warming + LRU eviction keeps the peak bounded.
         try
         {
             var solution = _currentSolution;
-            await Task.WhenAll(solution.Projects.Select(GetCompilationAsync)).ConfigureAwait(false);
+            int count = 0;
+            foreach (var project in solution.Projects)
+            {
+                await GetCompilationAsync(project).ConfigureAwait(false);
+                count++;
+            }
             _isWarmed = true;
-            _logger.LogInformation("Warmed compilations for {Count} projects", solution.Projects.Count());
+            _logger.LogInformation("Warmed compilations for {Count} projects (cache bounded to {Cap} most-recent)", count, MaxCachedCompilations);
         }
         catch (Exception ex)
         {
@@ -392,14 +451,18 @@ public sealed class RoslynWorkspace : IDisposable
     /// so a cache hit means neither this project nor any of its dependencies
     /// have changed since the last compilation.
     /// Uses per-project locking so concurrent callers share one compilation
-    /// instead of each triggering their own.
+    /// instead of each triggering their own. The cache is bounded; least-recently-used
+    /// entries are evicted when it exceeds MaxCachedCompilations.
     /// </summary>
     public async Task<Compilation?> GetCompilationAsync(Project project)
     {
         var version = await project.GetDependentVersionAsync();
 
         if (_compilationCache.TryGetValue(project.Id, out var cached) && cached.Version == version)
+        {
+            cached.LastAccessTick = Interlocked.Increment(ref _accessTick);
             return cached.Compilation;
+        }
 
         var sem = _compilationLocks.GetOrAdd(project.Id, _ => new SemaphoreSlim(1, 1));
         await sem.WaitAsync();
@@ -407,11 +470,22 @@ public sealed class RoslynWorkspace : IDisposable
         {
             // Re-check after acquiring lock — another caller may have compiled while we waited
             if (_compilationCache.TryGetValue(project.Id, out cached) && cached.Version == version)
+            {
+                cached.LastAccessTick = Interlocked.Increment(ref _accessTick);
                 return cached.Compilation;
+            }
 
             var compilation = await project.GetCompilationAsync();
             if (compilation is not null)
-                _compilationCache[project.Id] = (version, compilation);
+            {
+                _compilationCache[project.Id] = new CacheEntry
+                {
+                    Version = version,
+                    Compilation = compilation,
+                    LastAccessTick = Interlocked.Increment(ref _accessTick),
+                };
+                EvictIfNeeded();
+            }
             return compilation;
         }
         finally
@@ -420,15 +494,41 @@ public sealed class RoslynWorkspace : IDisposable
         }
     }
 
+    private void EvictIfNeeded()
+    {
+        if (_compilationCache.Count <= MaxCachedCompilations) return;
+        lock (_evictionLock)
+        {
+            while (_compilationCache.Count > MaxCachedCompilations)
+            {
+                ProjectId? oldestId = null;
+                long oldestTick = long.MaxValue;
+                foreach (var kv in _compilationCache)
+                {
+                    if (kv.Value.LastAccessTick < oldestTick)
+                    {
+                        oldestTick = kv.Value.LastAccessTick;
+                        oldestId = kv.Key;
+                    }
+                }
+                if (oldestId is null) break;
+                _compilationCache.TryRemove(oldestId, out _);
+            }
+        }
+    }
+
     /// <summary>
     /// Pre-compiles all projects so that subsequent tool calls hit the cache.
     /// Call after workspace load to avoid paying compilation cost on first tool use.
+    /// Note: only the <see cref="MaxCachedCompilations"/> most-recently-touched projects
+    /// remain cached at the end; older ones are evicted.
     /// </summary>
     public async Task WarmCompilationsAsync()
     {
         var solution = Solution;
-        await Task.WhenAll(solution.Projects.Select(GetCompilationAsync));
-        _logger.LogInformation("Warmed compilations for {Count} projects", solution.Projects.Count());
+        foreach (var project in solution.Projects)
+            await GetCompilationAsync(project);
+        _logger.LogInformation("Warmed compilations for {Count} projects (cache bounded to {Cap} most-recent)", solution.Projects.Count(), MaxCachedCompilations);
     }
 
     /// <summary>
@@ -447,10 +547,36 @@ public sealed class RoslynWorkspace : IDisposable
         }
     }
 
-    private static bool IsBuildOutputPath(string path)
+    /// <summary>
+    /// Returns the path to a solution file at the workspace root, or null if none exist.
+    /// Checks only the top-level directory — nested solutions (in samples, tests-of-tests,
+    /// etc.) are intentionally ignored.
+    /// </summary>
+    private static string? FindSolutionFile(string rootPath)
+    {
+        foreach (var pattern in new[] { "*.slnx", "*.sln", "*.slnf" })
+        {
+            var match = Directory.EnumerateFiles(rootPath, pattern, SearchOption.TopDirectoryOnly).FirstOrDefault();
+            if (match is not null) return match;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Paths to skip during project discovery and file-change tracking.
+    /// Includes build output, package caches, IDE/SCM metadata, and the JS ecosystem's node_modules
+    /// — which can otherwise dominate a recursive walk in mixed-language repos.
+    /// </summary>
+    public static bool IsExcludedPath(string path)
     {
         var normalized = path.Replace('\\', '/');
-        return normalized.Contains("/bin/") || normalized.Contains("/obj/");
+        return normalized.Contains("/bin/")
+            || normalized.Contains("/obj/")
+            || normalized.Contains("/node_modules/")
+            || normalized.Contains("/.git/")
+            || normalized.Contains("/.vs/")
+            || normalized.Contains("/.idea/")
+            || normalized.Contains("/packages/");
     }
 
     public void Dispose()
