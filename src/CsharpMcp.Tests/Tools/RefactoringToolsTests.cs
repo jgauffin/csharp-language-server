@@ -109,7 +109,8 @@ public class RefactoringToolsTests : IAsyncLifetime
 
         await RefactoringTools.RenameSymbolAsync(_workspace, pos, "MathHelper");
 
-        var calcContent = await File.ReadAllTextAsync(FilePath("LibA", "Calculator.cs"));
+        // The declaration file is renamed to match the new type name.
+        var calcContent = await File.ReadAllTextAsync(FilePath("LibA", "MathHelper.cs"));
         calcContent.ShouldContain("public class MathHelper");
 
         var appContent = await File.ReadAllTextAsync(FilePath("App", "Program.cs"));
@@ -117,6 +118,29 @@ public class RefactoringToolsTests : IAsyncLifetime
 
         var libBContent = await File.ReadAllTextAsync(FilePath("LibB", "Dog.cs"));
         libBContent.ShouldContain("MathHelper");
+    }
+
+    [Fact]
+    public async Task RenameSymbol_Type_RenamesFileAndLeavesNoDuplicate()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 4, Column: 14);
+
+        await RefactoringTools.RenameSymbolAsync(_workspace, pos, "MathHelper");
+
+        // The old file is gone, the new file exists in the SAME folder (not the root).
+        File.Exists(FilePath("LibA", "Calculator.cs")).ShouldBeFalse();
+        File.Exists(FilePath("LibA", "MathHelper.cs")).ShouldBeTrue();
+
+        // No stray copy dumped at the solution/project root.
+        File.Exists(Path.Combine(_tempDir, "MathHelper.cs")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "Calculator.cs")).ShouldBeFalse();
+        File.Exists(Path.Combine(_tempDir, "LibA", "LibA", "MathHelper.cs")).ShouldBeFalse();
+
+        // Exactly one file on disk declares the renamed type.
+        var declaringFiles = Directory.GetFiles(_tempDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllText(f).Contains("public class MathHelper"))
+            .ToList();
+        declaringFiles.Count.ShouldBe(1);
     }
 
     [Fact]

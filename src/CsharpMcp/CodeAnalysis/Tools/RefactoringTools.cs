@@ -43,21 +43,59 @@ public static class RefactoringTools
         var (_, renamedSolution) = await ComputeRenameAsync(solution, pos, newName);
         var changes = await CollectChangesAsync(solution, renamedSolution, newName);
 
-        // Apply changes and write to disk
-        if (!workspace.TryApplyChanges(renamedSolution))
-            throw new InvalidOperationException("Failed to apply rename changes to workspace.");
+        // Persist to disk ourselves, then sync the in-memory snapshot. We do NOT let
+        // MSBuildWorkspace.TryApplyChanges write files: when a type rename also renames
+        // its document, ApplyChanges adds a new document whose path resolves against the
+        // project root (losing the original subfolder), producing a duplicate copy in
+        // the project root. Driving disk writes from the document FilePaths avoids that.
+        await PersistRenameToDiskAsync(solution, renamedSolution);
 
-        // Write each changed document to disk
-        foreach (var docId in renamedSolution.GetChanges(solution).GetProjectChanges().SelectMany(p => p.GetChangedDocuments()))
-        {
-            var doc = renamedSolution.GetDocument(docId);
-            if (doc?.FilePath is null) continue;
-
-            var text = await doc.GetTextAsync();
-            await File.WriteAllTextAsync(doc.FilePath, text.ToString());
-        }
+        // Update the in-memory solution to match what we just wrote, without going
+        // through MSBuildWorkspace's disk-mutating ApplyChanges.
+        workspace.SyncRenamedSolution(renamedSolution);
 
         return new RenamePreview(newName, changes, changes.Select(c => c.FilePath).Distinct().ToList());
+    }
+
+    /// <summary>
+    /// Writes the renamed solution to disk by reconciling documents against the original:
+    /// changed documents are overwritten, renamed-file documents move (delete old, write new),
+    /// and any added/removed documents are mirrored on disk. Each file is written exactly once.
+    /// </summary>
+    private static async Task PersistRenameToDiskAsync(Solution original, Solution renamed)
+    {
+        foreach (var projectChange in renamed.GetChanges(original).GetProjectChanges())
+        {
+            // A file rename surfaces as a removed document (old path) + added document (new path),
+            // both pointing at real FilePaths. Delete the old file so we don't leave a stale copy.
+            foreach (var docId in projectChange.GetRemovedDocuments())
+            {
+                var oldDoc = original.GetDocument(docId);
+                if (oldDoc?.FilePath is { } oldPath && File.Exists(oldPath))
+                    File.Delete(oldPath);
+            }
+
+            foreach (var docId in projectChange.GetAddedDocuments())
+            {
+                var newDoc = renamed.GetDocument(docId);
+                if (newDoc?.FilePath is null) continue;
+
+                var dir = Path.GetDirectoryName(newDoc.FilePath);
+                if (dir is not null) Directory.CreateDirectory(dir);
+
+                var text = await newDoc.GetTextAsync();
+                await File.WriteAllTextAsync(newDoc.FilePath, text.ToString());
+            }
+
+            foreach (var docId in projectChange.GetChangedDocuments())
+            {
+                var newDoc = renamed.GetDocument(docId);
+                if (newDoc?.FilePath is null) continue;
+
+                var text = await newDoc.GetTextAsync();
+                await File.WriteAllTextAsync(newDoc.FilePath, text.ToString());
+            }
+        }
     }
 
     public static async Task<string> FormatDocumentAsync(Solution solution, string filePath)
@@ -80,10 +118,13 @@ public static class RefactoringTools
                 $"Symbol '{symbol.ToDisplayString()}' is not a user-defined source symbol and cannot be renamed. " +
                 $"Ensure the position points to the identifier name, not a keyword or type reference.");
 
+        // RenameFile renames the type's document to match the new name, but only when the
+        // symbol is a type whose declaration file already shares its name (e.g. Calculator.cs
+        // for type Calculator). Files housing multiple types are left untouched by Roslyn.
         var renamedSolution = await Renamer.RenameSymbolAsync(
             solution,
             symbol,
-            new SymbolRenameOptions(),
+            new SymbolRenameOptions { RenameFile = true },
             newName
         );
 
