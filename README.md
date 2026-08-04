@@ -49,14 +49,16 @@ This matters most for C# because:
 
 ### MCP Client Configuration
 
+__`--no-build` is required to be able to run multiple instances, i.e. more than one VsCode.__
+
 **Claude Code:**
 
 ```bash
 # Analyze the current directory
-claude mcp add csharp -- dotnet run --project <server>/src/CsharpMcp
+claude mcp add csharp -- dotnet run --no-build --project <server>/src/CsharpMcp
 
 # Analyze a specific project
-claude mcp add csharp -- dotnet run --project <server>/src/CsharpMcp -- <your-csharp-repo>
+claude mcp add csharp -- dotnet run --no-build --project <server>/src/CsharpMcp -- <your-csharp-repo>
 ```
 
 Replace `<server>` with the path to your clone of this repo.
@@ -68,7 +70,7 @@ Replace `<server>` with the path to your clone of this repo.
   "mcpServers": {
     "csharp": {
       "command": "dotnet",
-      "args": ["run", "--project", "<server>/src/CsharpMcp", "--", "[your-csharp-repo]"]
+      "args": ["run", "--no-build", "--project", "<server>/src/CsharpMcp", "--", "[your-csharp-repo]"]
     }
   }
 }
@@ -80,7 +82,7 @@ Or with a published binary:
 {
   "mcpServers": {
     "csharp": {
-      "command": "<server>/CsharpMcp",
+      "command": "<server>/CsharpMcp.exe",
       "args": ["[your-csharp-repo]"]
     }
   }
@@ -103,11 +105,11 @@ Or with a published binary:
 {
   "mcpServers": {
     "csharp-api": {
-      "command": "<server>/CsharpMcp",
+      "command": "<server>/CsharpMcp.exe",
       "args": ["--name", "csharp-api", "--description", "API layer", "<your-api-repo>"]
     },
     "csharp-core": {
-      "command": "<server>/CsharpMcp",
+      "command": "<server>/CsharpMcp.exe",
       "args": ["--name", "csharp-core", "--description", "Core domain", "<your-core-repo>"]
     }
   }
