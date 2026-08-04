@@ -473,6 +473,48 @@
             affects more than one quality characteristic.
             </summary>
         </member>
+        <member name="T:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation">
+            <summary>
+            What every code review rule declares about itself, independently of any code it inspects.
+            </summary>
+            <remarks>
+            These are the rule's identity and intent rather than its findings. Keeping them on the rule means a
+            caller can list, filter and document the available rules — and work out a report's coverage — without
+            running an analysis first.
+            </remarks>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.ID">
+            <summary>
+            Gets the rule's stable identifier, such as <c>AM0058</c>. Used to suppress or reference a rule,
+            so it must not change once published even if the rule is renamed.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.Title">
+            <summary>
+            Gets the short description of what the rule looks for.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.Suggestion">
+            <summary>
+            Gets the advice offered when the rule matches. This is what turns a finding into something
+            actionable rather than a bare complaint.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.Quality">
+            <summary>
+            Gets how serious a match is. Note the scale runs the opposite way to the metrics — lower is worse.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.QualityAttribute">
+            <summary>
+            Gets which qualities of the code a match harms. Several may apply at once.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.CodeReview.IEvaluation.ImpactLevel">
+            <summary>
+            Gets how much code a match affects, from a whole project down to a single expression.
+            </summary>
+        </member>
         <member name="T:ArchiMetrics.Analysis.Common.CodeReview.ImpactLevel">
             <summary>
             How much code a rule's finding affects, from a whole project down to a single expression.
@@ -1015,6 +1057,16 @@
             <param name="metrics">The other instance to merge.</param>
             <returns>The new <see cref="T:ArchiMetrics.Analysis.Common.Metrics.IHalsteadMetrics"/> instance from the merged sources.</returns>
         </member>
+        <member name="T:ArchiMetrics.Analysis.Common.Metrics.IMemberMetric">
+            <summary>
+            Defines the interface for member metrics — the level at which measurements are actually taken.
+            </summary>
+            <remarks>
+            Everything above this is an aggregate of these values, which makes members the level at which acting
+            on the numbers usually makes most sense: a namespace cannot be refactored, but the method dragging
+            its score down can be.
+            </remarks>
+        </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.IMemberMetric.AccessModifier">
             <summary>
             Gets the access modifier for the member.
@@ -1131,9 +1183,25 @@
              If this class does not exist then the property will return <code>null</code>.
              </remarks>
         </member>
+        <member name="T:ArchiMetrics.Analysis.Common.Metrics.IProjectMetric">
+            <summary>
+            Defines the interface for project metrics — the widest view, aggregating every namespace beneath.
+            </summary>
+            <remarks>
+            The values here are most useful for architectural questions rather than local ones: whether a project
+            depends on too much, whether its types belong together, and whether its abstractness matches how much
+            else relies on it.
+            </remarks>
+        </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.IProjectMetric.NamespaceMetrics">
             <summary>
             Gets the <see cref="T:ArchiMetrics.Analysis.Common.Metrics.INamespaceMetric"/> for namespaces defined in the project.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.IProjectMetric.Dependants">
+            <summary>
+            Gets the names of the assemblies that depend on this project — the code that would be disturbed
+            by changing it.
             </summary>
         </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.IProjectMetric.AssemblyDependencies">
@@ -1459,6 +1527,37 @@
             classify a value rather than comparing against your own numbers.
             </remarks>
         </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.NamespaceName">
+            <summary>
+            The namespace containing the member.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.TypeName">
+            <summary>
+            The type declaring the member.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.Name">
+            <summary>
+            The member's signature.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.CodeFile">
+            <summary>
+            Path to the source file, relative to the root folder the agent was given.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.LineNumber">
+            <summary>
+            The line the member is declared on, so a caller can navigate straight to it.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.AccessModifier">
+            <summary>
+            The member's declared accessibility. The same complexity matters more in a public member, which
+            callers outside the assembly depend on and which cannot be changed freely.
+            </summary>
+        </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.MemberSummary.MaintainabilityIndex">
             <summary>
             The maintainability index, 0-100, <b>higher is better</b>. Falls as the member grows in size,
@@ -1738,6 +1837,11 @@
             and the review rules telling the same story.
             </remarks>
         </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.NamespaceSummary.Name">
+            <summary>
+            The fully qualified namespace name.
+            </summary>
+        </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.NamespaceSummary.MaintainabilityIndex">
             <summary>
             The maintainability index, 0-100, <b>higher is better</b>. Weighted by executable statements
@@ -1988,6 +2092,27 @@
             cost to whoever has to change it however tidy the rest of the type is.
             </remarks>
         </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.NamespaceName">
+            <summary>
+            The namespace containing the type.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.Name">
+            <summary>
+            The type's name.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.Kind">
+            <summary>
+            What kind of type this is — class, interface, struct or delegate.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.AccessModifier">
+            <summary>
+            The type's declared accessibility. A public type's metrics carry more weight, since the outside
+            world depends on it and it cannot be reshaped freely.
+            </summary>
+        </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.MaintainabilityIndex">
             <summary>
             The maintainability index, 0-100, <b>higher is better</b>. Averaged over the type's members and
@@ -2047,6 +2172,12 @@
             change. 1.0 is unstable: it depends on much and nothing depends on it, so it is free to change.
             The warning sign is a type that is stable and concrete at once, since everything relies on it and
             nothing can be substituted for it.
+            </summary>
+        </member>
+        <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.IsAbstract">
+            <summary>
+            Whether the type is abstract. Read alongside <see cref="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.Instability"/>: a type that is both
+            stable and concrete is one that everything depends on and nothing can substitute.
             </summary>
         </member>
         <member name="P:ArchiMetrics.Analysis.Common.Metrics.TypeSummary.MemberCount">
@@ -2222,6 +2353,47 @@
             behaviour has not is worse than no metric at all.
             </remarks>
         </member>
+        <member name="T:ArchiMetrics.Analysis.Metrics.NeedsDocsOrRefactorAnalyzer">
+            <summary>
+            Finds methods whose names do not tell a reader what they do.
+            </summary>
+            <remarks>
+            The core signal is the gap between an embedding of the method's name and an embedding of its body. A
+            wide gap means the name is not carrying its weight, so the only way to learn what the method does is
+            to read all of it — the cost this analyzer exists to surface. Complexity, nesting and unexplained
+            literals are folded in as secondary evidence, since they compound the same problem.
+            </remarks>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.Metrics.NeedsDocsOrRefactorAnalyzer.#ctor(ArchiMetrics.Analysis.Common.Metrics.IEmbeddingProvider,System.String,System.Int32,System.Double,System.Double,System.Double,System.Double)">
+            <summary>
+            Initialises the analyzer.
+            </summary>
+            <remarks>
+            The four weights are exposed so the balance can be tuned per codebase, and they are expected to
+            sum to 1.0 — that is what keeps <c>OpacityScore</c> inside 0.0 to 1.0 and therefore comparable
+            between runs. Nothing enforces the sum, so a caller changing one weight should adjust another.
+            </remarks>
+            <param name="embeddingProvider">Supplies the name and body vectors. Required.</param>
+            <param name="rootFolder">The folder that reported file paths are relative to.</param>
+            <param name="minimumTokens">
+            The size below which a method is ignored. Short methods are readable whatever they are called.
+            </param>
+            <param name="weightSemanticGap">Weight of the name-versus-body gap, the primary signal.</param>
+            <param name="weightComplexity">Weight of cyclomatic complexity.</param>
+            <param name="weightNesting">Weight of block nesting depth.</param>
+            <param name="weightMagicLiterals">Weight of unexplained literal values.</param>
+            <exception cref="T:System.ArgumentNullException"><paramref name="embeddingProvider"/> is <see langword="null"/>.</exception>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.Metrics.NeedsDocsOrRefactorAnalyzer.Analyze(System.Collections.Generic.IEnumerable{Microsoft.CodeAnalysis.SyntaxTree},System.Threading.CancellationToken)">
+            <summary>
+            Analyses the given syntax trees and returns the methods that read as opaque.
+            </summary>
+            <param name="trees">The syntax trees to examine.</param>
+            <param name="cancellationToken">Cancels the analysis.</param>
+            <returns>
+            The candidates found, unordered. Callers usually sort by <c>OpacityScore</c> descending.
+            </returns>
+        </member>
         <member name="T:ArchiMetrics.Analysis.Metrics.PhysicalLinesCalculator">
             <summary>
             Counts the source lines a piece of code actually occupies — the size a reader perceives on opening
@@ -2300,6 +2472,29 @@
             dropping records into an <see cref="F:ArchiMetrics.Analysis.Common.Metrics.TypeMetricKind.Unknown"/> bucket that tells the
             reader nothing.
             </remarks>
+        </member>
+        <member name="T:ArchiMetrics.Analysis.ProjectMetricsCalculator">
+            <summary>
+            Calculates project-level metrics for every project in a solution, rolling up the namespace metrics
+            produced by the underlying code metrics calculator.
+            </summary>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.ProjectMetricsCalculator.#ctor(ArchiMetrics.Analysis.Common.Metrics.ICodeMetricsCalculator)">
+            <summary>
+            Initialises the calculator.
+            </summary>
+            <param name="metricsCalculator">The calculator supplying the underlying namespace metrics.</param>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.ProjectMetricsCalculator.Calculate(Microsoft.CodeAnalysis.Solution)">
+            <summary>
+            Calculates metrics for every project in the solution.
+            </summary>
+            <remarks>
+            Compilations for all projects are started together and awaited as a group, since obtaining them is
+            the slow part and they do not depend on one another.
+            </remarks>
+            <param name="solution">The solution to analyse.</param>
+            <returns>One metric per project, in the solution's own order.</returns>
         </member>
         <member name="T:ArchiMetrics.Analysis.ReferenceResolvers.ReferenceRepository">
             <summary>
@@ -2386,6 +2581,37 @@
             the scale is 0-100 and that higher is better. All band boundaries come from
             <see cref="T:ArchiMetrics.Analysis.Common.Metrics.MetricThresholds"/>; none are duplicated here.
             </remarks>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.WorkspaceMetricsSummary.#ctor">
+            <summary>
+            Initialises the summary with the default metrics calculator.
+            </summary>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.WorkspaceMetricsSummary.#ctor(ArchiMetrics.Analysis.Common.Metrics.IProjectMetricsCalculator)">
+            <summary>
+            Initialises the summary with a specific calculator, for callers substituting the default
+            implementation — most often a test double.
+            </summary>
+            <param name="calculator">The calculator supplying the project metrics to render.</param>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.WorkspaceMetricsSummary.GenerateSummary(Microsoft.CodeAnalysis.Workspace)">
+            <summary>
+            Renders the workspace's current solution as plain text.
+            </summary>
+            <param name="workspace">The workspace whose current solution is rendered.</param>
+            <returns>The summary text, or an empty string if there are no projects.</returns>
+        </member>
+        <member name="M:ArchiMetrics.Analysis.WorkspaceMetricsSummary.GenerateSummary(Microsoft.CodeAnalysis.Solution)">
+            <summary>
+            Renders a solution as plain text: the scale legend, then every project, namespace and type with
+            its metrics and health rating.
+            </summary>
+            <remarks>
+            Types are listed worst first so that the part of a namespace needing attention is the part a
+            reader meets first, rather than being buried alphabetically among healthy neighbours.
+            </remarks>
+            <param name="solution">The solution to render.</param>
+            <returns>The summary text, or an empty string if the solution holds no projects.</returns>
         </member>
         <member name="M:ArchiMetrics.Analysis.WorkspaceMetricsSummary.GetWorstChildScore(System.Collections.Generic.IEnumerable{ArchiMetrics.Analysis.Common.Metrics.INamespaceMetric})">
             <summary>
