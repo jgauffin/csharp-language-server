@@ -102,7 +102,8 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
                     var rating = MetricThresholds.Label(MetricThresholds.RateMaintainability(t.MaintainabilityIndex));
                     entry.Details.Add(
                         $"MI:{t.MaintainabilityIndex:F0} [{rating}] CC:{t.CyclomaticComplexity} " +
-                        $"LOC:{t.LinesOfCode} Stmts:{t.ExecutableStatements} Coupling:{t.ClassCoupling}");
+                        $"LOC:{t.LinesOfCode} Stmts:{t.ExecutableStatements} " +
+                        $"Efferent:{t.EfferentCoupling} ClassCoupling:{t.ClassCoupling}");
                 }
             }
 
@@ -181,7 +182,15 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         logger.LogInformation("Tool metric_scales invoked");
         // Straight from the library, never a copy: the bands it rates against and the bands it
         // describes here have to be the same ones.
-        return MetricThresholds.DescribeScales();
+        //
+        // ClassCoupling is appended here rather than taken from the library because the library
+        // does not rate it and so does not describe it — but the reports print it, and a reader
+        // who sees a high ClassCoupling next to a mild rating needs to be told that the two are
+        // unrelated. Without this line the legend reads as though every printed number is rated.
+        return MetricThresholds.DescribeScales() + Environment.NewLine +
+               "  ClassCoupling: distinct types referenced. Count only - no good or bad value, no " +
+               "band, and NOT part of the rating. Efferent Coupling is the one the rating uses; a " +
+               "type can show a high ClassCoupling and still rate well.";
     }
 
     [McpServerTool, Description("Generate an ISO 5055 automated source code quality report. Analyzes security, reliability, performance efficiency, and maintainability. Returns violation counts, violations per KLOC, pass/fail status, and covered CWE IDs with per-violation details.")]

@@ -357,7 +357,7 @@ public static class TextFormatter
               .Append("  CC: ").Append(ns.CyclomaticComplexity)
               .Append("  Abstractness: ").Append(ns.Abstractness.ToString("F2"))
               .Append("  DOI: ").Append(ns.DepthOfInheritance)
-              .Append("  Coupling: ").Append(ns.ClassCoupling)
+              .Append("  ClassCoupling: ").Append(ns.ClassCoupling)
               .AppendLine();
 
             foreach (var type in ns.TypeMetrics)
@@ -371,7 +371,8 @@ public static class TextFormatter
                   .Append("  MI: ").Append(type.MaintainabilityIndex.ToString("F1"))
                   .Append("  CC: ").Append(type.CyclomaticComplexity)
                   .Append("  DOI: ").Append(type.DepthOfInheritance)
-                  .Append("  Coupling: ").Append(type.ClassCoupling)
+                  .Append("  Efferent: ").Append(type.EfferentCoupling)
+                  .Append("  ClassCoupling: ").Append(type.ClassCoupling)
                   .Append("  Instability: ").Append(type.Instability.ToString("F2"));
                 if (type.IsAbstract) sb.Append("  [abstract]");
                 sb.AppendLine();
@@ -388,7 +389,7 @@ public static class TextFormatter
                       .Append("  MI: ").Append(member.MaintainabilityIndex.ToString("F1"))
                       .Append(' ').Append(RateMi(member.MaintainabilityIndex))
                       .Append("  CC: ").Append(member.CyclomaticComplexity)
-                      .Append("  Coupling: ").Append(member.ClassCoupling)
+                      .Append("  ClassCoupling: ").Append(member.ClassCoupling)
                       .Append("  Params: ").Append(member.NumberOfParameters)
                       .Append("  Locals: ").Append(member.NumberOfLocalVariables)
                       .AppendLine();
@@ -417,7 +418,7 @@ public static class TextFormatter
               .Append("  Stmts: ").Append(ns.ExecutableStatements)
               .Append("  Abstractness: ").Append(ns.Abstractness.ToString("F2"))
               .Append("  DOI: ").Append(ns.DepthOfInheritance)
-              .Append("  Coupling: ").Append(ns.ClassCoupling)
+              .Append("  ClassCoupling: ").Append(ns.ClassCoupling)
               .Append("  Types: ").Append(ns.TypeCount)
               .AppendLine();
         }
@@ -452,8 +453,8 @@ public static class TextFormatter
               .Append("  LOC: ").Append(t.LinesOfCode)
               .Append("  Stmts: ").Append(t.ExecutableStatements)
               .Append("  DOI: ").Append(t.DepthOfInheritance)
-              .Append("  Coupling: ").Append(t.ClassCoupling)
               .Append("  Efferent: ").Append(t.EfferentCoupling)
+              .Append("  ClassCoupling: ").Append(t.ClassCoupling)
               .Append("  Instability: ").Append(t.Instability.ToString("F2"))
               .Append("  Members: ").Append(t.MemberCount)
               .AppendLine();
@@ -578,9 +579,9 @@ public static class TextFormatter
             if (d.StmtsDelta != 0)
                 sb.Append("  Stmts: ").Append(b.Stmts).Append(" -> ").Append(a.Stmts)
                   .Append(" (").Append(FormatDelta(d.StmtsDelta)).Append(')');
-            if (d.CouplingDelta != 0)
-                sb.Append("  Coupling: ").Append(b.Coupling).Append(" -> ").Append(a.Coupling)
-                  .Append(" (").Append(FormatDelta(d.CouplingDelta)).Append(')');
+            if (d.ClassCouplingDelta != 0)
+                sb.Append("  ClassCoupling: ").Append(b.ClassCoupling).Append(" -> ").Append(a.ClassCoupling)
+                  .Append(" (").Append(FormatDelta(d.ClassCouplingDelta)).Append(')');
         }
         sb.AppendLine();
     }

@@ -9,7 +9,8 @@ public record TypeMetricEntry(
     int CC,
     int LOC,
     int Stmts,
-    int Coupling,
+    // ClassCoupling, not efferent coupling — the two differ and only efferent feeds a rating.
+    int ClassCoupling,
     double Instability);
 
 public record QualitySnapshot(
@@ -24,7 +25,7 @@ public record TypeDelta(
     int CCDelta,
     int LOCDelta,
     int StmtsDelta,
-    int CouplingDelta);
+    int ClassCouplingDelta);
 
 public record QualityComparison(
     QualitySnapshot Before,
@@ -82,7 +83,7 @@ public static class QualityTools
             var ccDelta = a.CC - b.CC;
             var locDelta = a.LOC - b.LOC;
             var stmtsDelta = a.Stmts - b.Stmts;
-            var couplingDelta = a.Coupling - b.Coupling;
+            var couplingDelta = a.ClassCoupling - b.ClassCoupling;
 
             if (Math.Abs(miDelta) < 0.1 && ccDelta == 0 && locDelta == 0 && stmtsDelta == 0 && couplingDelta == 0)
                 continue; // no meaningful change
