@@ -73,8 +73,7 @@ if (workspace is null)
     return 1;
 }
 var solution = workspace.Solution;
-var agent = new CodeAnalysisAgent(workspace.InnerWorkspace, solutionDir);
-var tools = new CsharpTools(workspace, agent, NullLogger<CsharpTools>.Instance);
+var tools = new CsharpTools(workspace, NullLogger<CsharpTools>.Instance);
 
 // ── Discover files and pick targets ─────────────────────────────────────
 var allFiles = ProjectTools.GetSolutionFiles(solution, solutionDir);

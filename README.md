@@ -43,7 +43,7 @@ This matters most for C# because:
 
 ## Requirements
 
-- .NET 9 SDK (includes MSBuild)
+- .NET 10 SDK (includes MSBuild)
 
 ## Quick Start
 

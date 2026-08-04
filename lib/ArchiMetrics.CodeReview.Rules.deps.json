@@ -1,11 +1,11 @@
 {
   "runtimeTarget": {
-    "name": ".NETCoreApp,Version=v9.0",
+    "name": ".NETCoreApp,Version=v10.0",
     "signature": ""
   },
   "compilationOptions": {},
   "targets": {
-    ".NETCoreApp,Version=v9.0": {
+    ".NETCoreApp,Version=v10.0": {
       "ArchiMetrics.CodeReview.Rules/3.0.0": {
         "dependencies": {
           "ArchiMetrics.Analysis": "3.0.1",
@@ -39,11 +39,7 @@
           }
         }
       },
-      "Microsoft.CodeAnalysis.Analyzers/3.11.0": {},
       "Microsoft.CodeAnalysis.Common/5.0.0": {
-        "dependencies": {
-          "Microsoft.CodeAnalysis.Analyzers": "3.11.0"
-        },
         "runtime": {
           "lib/net9.0/Microsoft.CodeAnalysis.dll": {
             "assemblyVersion": "5.0.0.0",
@@ -94,7 +90,6 @@
       },
       "Microsoft.CodeAnalysis.CSharp/5.0.0": {
         "dependencies": {
-          "Microsoft.CodeAnalysis.Analyzers": "3.11.0",
           "Microsoft.CodeAnalysis.Common": "5.0.0"
         },
         "runtime": {
@@ -148,7 +143,6 @@
       "Microsoft.CodeAnalysis.CSharp.Workspaces/5.0.0": {
         "dependencies": {
           "Humanizer.Core": "2.14.1",
-          "Microsoft.CodeAnalysis.Analyzers": "3.11.0",
           "Microsoft.CodeAnalysis.CSharp": "5.0.0",
           "Microsoft.CodeAnalysis.Common": "5.0.0",
           "Microsoft.CodeAnalysis.Workspaces.Common": "5.0.0",
@@ -205,7 +199,6 @@
       "Microsoft.CodeAnalysis.Workspaces.Common/5.0.0": {
         "dependencies": {
           "Humanizer.Core": "2.14.1",
-          "Microsoft.CodeAnalysis.Analyzers": "3.11.0",
           "Microsoft.CodeAnalysis.Common": "5.0.0",
           "System.Composition": "9.0.0"
         },
@@ -261,7 +254,6 @@
         "dependencies": {
           "Humanizer.Core": "2.14.1",
           "Microsoft.Build.Framework": "17.11.31",
-          "Microsoft.CodeAnalysis.Analyzers": "3.11.0",
           "Microsoft.CodeAnalysis.Workspaces.Common": "5.0.0",
           "Microsoft.Extensions.DependencyInjection": "9.0.0",
           "Microsoft.Extensions.Logging": "9.0.0",
@@ -496,7 +488,6 @@
       },
       "Microsoft.ML.OnnxRuntime.Managed/1.22.0": {
         "dependencies": {
-          "System.Memory": "4.5.5",
           "System.Numerics.Tensors": "9.0.0"
         },
         "runtime": {
@@ -508,8 +499,7 @@
       },
       "Microsoft.ML.Tokenizers/1.0.2": {
         "dependencies": {
-          "Google.Protobuf": "3.27.1",
-          "System.Text.Json": "8.0.5"
+          "Google.Protobuf": "3.27.1"
         },
         "runtime": {
           "lib/net8.0/Microsoft.ML.Tokenizers.dll": {
@@ -594,7 +584,6 @@
           }
         }
       },
-      "System.Memory/4.5.5": {},
       "System.Numerics.Tensors/9.0.0": {
         "runtime": {
           "lib/net9.0/System.Numerics.Tensors.dll": {
@@ -603,7 +592,6 @@
           }
         }
       },
-      "System.Text.Json/8.0.5": {},
       "ArchiMetrics.Analysis/3.0.1": {
         "dependencies": {
           "Microsoft.CodeAnalysis.CSharp.Workspaces": "5.0.0",
@@ -646,13 +634,6 @@
       "sha512": "sha512-9bGe48OGm0EO69HHpex0shnNLH7ZEB4Nwj7mofeLUoQcl9NeuIJe9F9dawKJF3E0bf5qPTwH/v3eyCXgMD4HuA==",
       "path": "microsoft.build.framework/17.11.31",
       "hashPath": "microsoft.build.framework.17.11.31.nupkg.sha512"
-    },
-    "Microsoft.CodeAnalysis.Analyzers/3.11.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-v/EW3UE8/lbEYHoC2Qq7AR/DnmvpgdtAMndfQNmpuIMx/Mto8L5JnuCfdBYtgvalQOtfNCnxFejxuRrryvUTsg==",
-      "path": "microsoft.codeanalysis.analyzers/3.11.0",
-      "hashPath": "microsoft.codeanalysis.analyzers.3.11.0.nupkg.sha512"
     },
     "Microsoft.CodeAnalysis.Common/5.0.0": {
       "type": "package",
@@ -808,26 +789,12 @@
       "path": "system.composition.typedparts/9.0.0",
       "hashPath": "system.composition.typedparts.9.0.0.nupkg.sha512"
     },
-    "System.Memory/4.5.5": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-XIWiDvKPXaTveaB7HVganDlOCRoj03l+jrwNvcge/t8vhGYKvqV+dMv6G4SAX2NoNmN0wZfVPTAlFwZcZvVOUw==",
-      "path": "system.memory/4.5.5",
-      "hashPath": "system.memory.4.5.5.nupkg.sha512"
-    },
     "System.Numerics.Tensors/9.0.0": {
       "type": "package",
       "serviceable": true,
       "sha512": "sha512-hyJB4UlpAi19Xr9AXzu2NuagKC4lPfHObNMEAA0HmqFz2rX7wKgzeYzO/jM/eBHDhnUGFFEjk5cOoJaxqg5J4A==",
       "path": "system.numerics.tensors/9.0.0",
       "hashPath": "system.numerics.tensors.9.0.0.nupkg.sha512"
-    },
-    "System.Text.Json/8.0.5": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-0f1B50Ss7rqxXiaBJyzUu9bWFOO2/zSlifZ/UNMdiIpDYe4cY4LQQicP4nirK1OS31I43rn062UIJ1Q9bpmHpg==",
-      "path": "system.text.json/8.0.5",
-      "hashPath": "system.text.json.8.0.5.nupkg.sha512"
     },
     "ArchiMetrics.Analysis/3.0.1": {
       "type": "project",

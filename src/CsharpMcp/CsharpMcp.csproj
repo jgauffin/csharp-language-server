@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>CsharpMcp</AssemblyName>
@@ -25,7 +25,6 @@
     <!-- MSBuild.Locator 1.11+ requires MSBuild-conflicting transitives to be suppressed so the
          host MSBuild's copy is used at runtime, avoiding assembly-load conflicts. -->
     <PackageReference Include="NuGet.Frameworks" Version="7.3.1" ExcludeAssets="runtime" PrivateAssets="all" />
-    <PackageReference Include="System.Reflection.Metadata" Version="10.0.7" />
 
   </ItemGroup>
 
