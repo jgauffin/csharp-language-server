@@ -1,6 +1,8 @@
 using ArchiMetrics.Analysis;
+using ArchiMetrics.Analysis.Common.Metrics;
 using CsharpMcp.CodeAnalysis;
 using CsharpMcp.CodeAnalysis.Tools;
+using Microsoft.Extensions.Logging.Abstractions;
 using Shouldly;
 
 namespace CsharpMcp.Tests.Tools;
@@ -12,8 +14,8 @@ public class QualityToolsTests : WorkspaceFixture
     {
         var metrics = new Dictionary<string, TypeMetricEntry>
         {
-            ["Ns.Foo"] = new("Ns.Foo", 75.0, 10, 100, 5, 0.8),
-            ["Ns.Bar"] = new("Ns.Bar", 60.0, 20, 200, 10, 0.9),
+            ["Ns.Foo"] = new("Ns.Foo", 75.0, 10, 100, 40, 5, 0.8),
+            ["Ns.Bar"] = new("Ns.Bar", 60.0, 20, 200, 80, 10, 0.9),
         };
         var before = new QualitySnapshot(DateTime.Now.AddMinutes(-10), 1, 5, metrics);
         var after = new QualitySnapshot(DateTime.Now, 1, 5, new Dictionary<string, TypeMetricEntry>(metrics));
@@ -32,12 +34,12 @@ public class QualityToolsTests : WorkspaceFixture
         var before = new QualitySnapshot(DateTime.Now.AddMinutes(-10), 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 60.0, 15, 200, 10, 0.8),
+                ["Ns.Foo"] = new("Ns.Foo", 60.0, 15, 200, 80, 10, 0.8),
             });
         var after = new QualitySnapshot(DateTime.Now, 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 75.0, 8, 120, 5, 0.7),
+                ["Ns.Foo"] = new("Ns.Foo", 75.0, 8, 120, 45, 5, 0.7),
             });
 
         var result = QualityTools.CompareSnapshots(before, after);
@@ -55,12 +57,12 @@ public class QualityToolsTests : WorkspaceFixture
         var before = new QualitySnapshot(DateTime.Now.AddMinutes(-10), 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 80.0, 5, 50, 3, 0.5),
+                ["Ns.Foo"] = new("Ns.Foo", 80.0, 5, 50, 18, 3, 0.5),
             });
         var after = new QualitySnapshot(DateTime.Now, 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 65.0, 12, 150, 8, 0.9),
+                ["Ns.Foo"] = new("Ns.Foo", 65.0, 12, 150, 60, 8, 0.9),
             });
 
         var result = QualityTools.CompareSnapshots(before, after);
@@ -77,12 +79,12 @@ public class QualityToolsTests : WorkspaceFixture
         var before = new QualitySnapshot(DateTime.Now.AddMinutes(-10), 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Old"] = new("Ns.Old", 70.0, 10, 100, 5, 0.8),
+                ["Ns.Old"] = new("Ns.Old", 70.0, 10, 100, 40, 5, 0.8),
             });
         var after = new QualitySnapshot(DateTime.Now, 0, 0,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.New"] = new("Ns.New", 85.0, 3, 40, 2, 0.5),
+                ["Ns.New"] = new("Ns.New", 85.0, 3, 40, 12, 2, 0.5),
             });
 
         var result = QualityTools.CompareSnapshots(before, after);
@@ -116,8 +118,8 @@ public class QualityToolsTests : WorkspaceFixture
             new DateTime(2026, 3, 10, 14, 30, 0), 2, 8,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.A"] = new("Ns.A", 70, 10, 100, 5, 0.8),
-                ["Ns.B"] = new("Ns.B", 80, 5, 50, 3, 0.5),
+                ["Ns.A"] = new("Ns.A", 70, 10, 100, 40, 5, 0.8),
+                ["Ns.B"] = new("Ns.B", 80, 5, 50, 18, 3, 0.5),
             });
 
         var text = TextFormatter.FormatSnapshot("snap-1", snapshot);
@@ -136,12 +138,12 @@ public class QualityToolsTests : WorkspaceFixture
         var before = new QualitySnapshot(new DateTime(2026, 3, 10, 14, 0, 0), 3, 12,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 60.0, 15, 200, 10, 0.8),
+                ["Ns.Foo"] = new("Ns.Foo", 60.0, 15, 200, 80, 10, 0.8),
             });
         var after = new QualitySnapshot(new DateTime(2026, 3, 10, 15, 0, 0), 1, 10,
             new Dictionary<string, TypeMetricEntry>
             {
-                ["Ns.Foo"] = new("Ns.Foo", 75.0, 8, 120, 5, 0.7),
+                ["Ns.Foo"] = new("Ns.Foo", 75.0, 8, 120, 45, 5, 0.7),
             });
         var comparison = QualityTools.CompareSnapshots(before, after);
 
@@ -155,6 +157,70 @@ public class QualityToolsTests : WorkspaceFixture
         // MI values formatted with current culture (may use comma or dot)
         text.ShouldContain("MI:");
         text.ShouldContain("CC: 15 -> 8 (-7)");
+        text.ShouldContain("LOC: 200 -> 120 (-80)");
+        text.ShouldContain("Stmts: 80 -> 45 (-35)");
+    }
+
+    [Fact]
+    public void Format_QualityComparison_CarriesRatingsWithoutTheLegend()
+    {
+        // "MI: 75,0" alone says nothing to a reader who does not know the scale, so every value
+        // carries the library's verdict. The full legend stays out of the response — it is ~1.1k
+        // characters, and metric_scales serves it on demand instead.
+        var before = new QualitySnapshot(new DateTime(2026, 3, 10, 14, 0, 0), 0, 0,
+            new Dictionary<string, TypeMetricEntry>());
+        var after = new QualitySnapshot(new DateTime(2026, 3, 10, 15, 0, 0), 0, 0,
+            new Dictionary<string, TypeMetricEntry>
+            {
+                ["Ns.Foo"] = new("Ns.Foo", 42.0, 15, 200, 80, 10, 0.8),
+            });
+
+        var text = TextFormatter.Format(QualityTools.CompareSnapshots(before, after));
+
+        text.ShouldContain($"[{(int)MetricThresholds.RateMaintainability(42.0)} - " +
+                           $"{MetricThresholds.Label(MetricThresholds.RateMaintainability(42.0))}]");
+        text.ShouldNotContain(MetricThresholds.DescribeScales());
+    }
+
+    [Fact]
+    public void CompareSnapshots_GrewWithStableMiAndCc_CountsAsDegraded()
+    {
+        // MI and CC unchanged, but the type got bigger. Reporting that as an improvement would
+        // tell the caller a refactoring helped when nothing was removed.
+        var before = new QualitySnapshot(DateTime.Now.AddMinutes(-10), 0, 0,
+            new Dictionary<string, TypeMetricEntry>
+            {
+                ["Ns.Foo"] = new("Ns.Foo", 70.0, 10, 100, 40, 5, 0.8),
+            });
+        var after = new QualitySnapshot(DateTime.Now, 0, 0,
+            new Dictionary<string, TypeMetricEntry>
+            {
+                ["Ns.Foo"] = new("Ns.Foo", 70.0, 10, 140, 55, 5, 0.8),
+            });
+
+        var result = QualityTools.CompareSnapshots(before, after);
+
+        result.Degraded.Count.ShouldBe(1);
+        result.Degraded[0].StmtsDelta.ShouldBe(15);
+        result.Improved.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void MetricScales_DescribesEveryScaleTheReportsUse()
+    {
+        var tools = new QualityHotspotsTools(
+            Workspace,
+            new CodeAnalysisAgent(Workspace.InnerWorkspace, FixturePath),
+            NullLogger<QualityHotspotsTools>.Instance);
+
+        var text = tools.metric_scales();
+
+        // The legend has to cover the abbreviations the reports actually print, or a caller that
+        // asks for it still cannot read them.
+        text.ShouldContain("Maintainability");
+        text.ShouldContain("Complexity");
+        text.ShouldContain("Statements");
+        text.ShouldContain("Instability");
     }
 
     [Fact]

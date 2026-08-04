@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text;
 using ArchiMetrics.Analysis;
 using ArchiMetrics.Analysis.Common.CodeReview;
+using ArchiMetrics.Analysis.Common.Metrics;
 using ArchiMetrics.CodeReview.Rules;
 using CsharpMcp.CodeAnalysis.Tools;
 using Microsoft.Extensions.Logging;
@@ -14,15 +15,16 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
 {
     private static readonly Dictionary<string, QualitySnapshot> Snapshots = new(StringComparer.Ordinal);
 
-    // Minimum per-dimension score (0-1) for an item to be included.
-    // MI 50 = average quality → score 0.50. Anything better is filtered out.
+    // Minimum per-dimension score (0-1, higher = worse) for an item to be included.
     private const double DefaultMinScore = 0.10;
 
     [McpServerTool, Description(
         "Find code hotspots that need refactoring. Weights three quality dimensions — maintainability (MI, CC, LOC), " +
         "duplication (code clones), and indirection (hidden coupling) — into a composite score. " +
         "Returns only items above the minimum score threshold. " +
-        "Use snapshotLabel to capture a baseline before changes, then compareToSnapshot to see impact.")]
+        "Use snapshotLabel to capture a baseline before changes, then compareToSnapshot to see impact. " +
+        "Metric values carry a health rating in brackets, [1 - Healthy] to [5 - Fix ASAP], where lower " +
+        "is better; call metric_scales for the scales and band boundaries behind them.")]
     public async Task<string> quality_hotspots(
         [Description("Filter to a specific project (glob or substring)")] string? projectName = null,
         [Description("Weight for maintainability index (0.0-1.0, default 0.34)")] double maintainabilityWeight = 0.34,
@@ -82,18 +84,25 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
             // Build hotspot entries keyed by identifier
             var hotspots = new Dictionary<string, HotspotEntry>(StringComparer.OrdinalIgnoreCase);
 
-            // 1. Maintainability: normalize MI (0-100 scale, lower=worse → invert to 0-1 where 1=worst)
-            // MI >= 50 is average-or-better → score <= 0.50, skip those
+            // 1. Maintainability: invert MI onto the composite's 0-1 axis, where 1 = worst.
+            // The inversion is a ranking device only — whether a value is actually bad is the
+            // library's call, via MetricThresholds, so that this tool and the review rules cannot
+            // disagree about the same type.
             if (metrics?.Items.Count > 0)
             {
                 foreach (var t in metrics.Items)
                 {
-                    var score = 1.0 - Math.Clamp(t.MaintainabilityIndex / 100.0, 0, 1);
+                    var score = 1.0 - Math.Clamp(
+                        (t.MaintainabilityIndex - MetricThresholds.Maintainability.Minimum) /
+                        (MetricThresholds.Maintainability.Maximum - MetricThresholds.Maintainability.Minimum), 0, 1);
                     if (score < minScore) continue;
                     var key = $"{t.NamespaceName}.{t.Name}";
                     var entry = GetOrCreate(hotspots, key, t.Kind.ToString());
                     entry.MaintainabilityScore = score;
-                    entry.Details.Add($"MI:{t.MaintainabilityIndex:F0} CC:{t.CyclomaticComplexity} LOC:{t.LinesOfCode} Coupling:{t.ClassCoupling}");
+                    var rating = MetricThresholds.Label(MetricThresholds.RateMaintainability(t.MaintainabilityIndex));
+                    entry.Details.Add(
+                        $"MI:{t.MaintainabilityIndex:F0} [{rating}] CC:{t.CyclomaticComplexity} " +
+                        $"LOC:{t.LinesOfCode} Stmts:{t.ExecutableStatements} Coupling:{t.ClassCoupling}");
                 }
             }
 
@@ -162,6 +171,19 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         }
     }
 
+    [McpServerTool, Description(
+        "Explain the metric scales used by the quality tools: what each metric measures, which " +
+        "direction is better, and the band boundaries behind the [1-5] health ratings. " +
+        "Call this when a metric value needs interpreting; the reports themselves omit the legend " +
+        "to keep responses small.")]
+    public string metric_scales()
+    {
+        logger.LogInformation("Tool metric_scales invoked");
+        // Straight from the library, never a copy: the bands it rates against and the bands it
+        // describes here have to be the same ones.
+        return MetricThresholds.DescribeScales();
+    }
+
     [McpServerTool, Description("Generate an ISO 5055 automated source code quality report. Analyzes security, reliability, performance efficiency, and maintainability. Returns violation counts, violations per KLOC, pass/fail status, and covered CWE IDs with per-violation details.")]
     public async Task<string> generate_iso5055_report(
         [Description("Max violations to show per category (default 20). Summary counts always reflect the full analysis.")] int maxViolationsPerCategory = 20)
@@ -224,10 +246,11 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
         if (filteredOut > 0)
             sb.Append(" (").Append(filteredOut).Append(" below threshold ").Append(minScore.ToString("F2")).Append(')');
         sb.AppendLine(":");
-        sb.Append("Weights: MI=").Append(mw.ToString("F2"))
+        sb.Append("Weights: Maint=").Append(mw.ToString("F2"))
           .Append(" Dup=").Append(dw.ToString("F2"))
           .Append(" Indirection=").Append(iw.ToString("F2"))
           .AppendLine();
+        sb.AppendLine("Scores run 0.00-1.00 where higher is worse — the opposite of the raw MI on each detail line.");
         sb.AppendLine();
 
         foreach (var e in ranked)
@@ -237,7 +260,9 @@ public class QualityHotspotsTools(RoslynWorkspace workspace, CodeAnalysisAgent a
                 sb.Append("  ").Append(e.FilePath).Append(':').Append(e.Line);
             sb.AppendLine();
             sb.Append("  Score: ").Append(e.CompositeScore.ToString("F3"));
-            if (e.MaintainabilityScore > 0) sb.Append("  MI: ").Append(e.MaintainabilityScore.ToString("F2"));
+            // "Maint" rather than "MI": this is the inverted 0-1 sub-score, which runs the opposite
+            // way from the raw MI printed on the detail line below it.
+            if (e.MaintainabilityScore > 0) sb.Append("  Maint: ").Append(e.MaintainabilityScore.ToString("F2"));
             if (e.DuplicationScore > 0) sb.Append("  Dup: ").Append(e.DuplicationScore.ToString("F2"));
             if (e.IndirectionScore > 0) sb.Append("  Indirection: ").Append(e.IndirectionScore.ToString("F2"));
             sb.AppendLine();

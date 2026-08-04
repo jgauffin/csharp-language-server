@@ -140,6 +140,7 @@ The server discovers all `.csproj` files under the root path and loads them into
 | | `batch_analyze` | Analyze multiple positions at once |
 | **Quality** | `quality_hotspots` | Composite quality scoring — finds worst code by weighting MI, duplication, indirection |
 | | `generate_iso5055_report` | ISO 5055 quality report (security, reliability, performance, maintainability) |
+| | `metric_scales` | What each metric measures, which direction is better, and the band boundaries behind the ratings |
 | **NuGet** | `nuget_search` | Cache-first search, falls back to remote |
 | | `nuget_packages` | List cached packages, or get metadata/deps for a specific package |
 | | `nuget_explore` | Explore assemblies, types, and XML docs in a cached package |
@@ -148,11 +149,20 @@ The server discovers all `.csproj` files under the root path and loads them into
 
 The `quality_hotspots` tool identifies code that needs refactoring by weighting three quality dimensions:
 
-- **Maintainability** — MI, cyclomatic complexity, LOC, coupling
+- **Maintainability** — MI, cyclomatic complexity, LOC, statements, coupling
 - **Duplication** — exact, renamed, and semantic code clones
 - **Indirection** — hidden coupling through deep call chains
 
 Default weights are roughly equal (≈0.33 each). Override weights to focus on specific concerns.
+
+**Reading the numbers:** every metric value carries a health rating in brackets, from `[1 - Healthy]`
+to `[5 - Fix ASAP]`, where lower is better — the opposite direction to the maintainability index next
+to it. Call `metric_scales` for the full legend; reports leave it out to keep responses small.
+
+Size is reported as two separate figures. **LOC** counts the source lines an element occupies,
+excluding blanks, comments and documentation — the bulk a reader scrolls past. **Stmts** counts
+executable statements, which formatting cannot change, and is the size term the maintainability
+index is actually built on.
 
 **Before/after tracking:**
 1. Call `quality_hotspots(snapshotLabel: "before")` at the start of a session
@@ -169,6 +179,10 @@ The `generate_iso5055_report` tool provides partial coverage of the [ISO/IEC 505
 - **Maintainability** — detects overly complex or opaque code (e.g. deep nesting, magic numbers)
 
 The report includes violation counts, violations per KLOC, pass/fail per category, covered CWE IDs, and per-violation file paths with fix suggestions.
+
+> **Note:** the KLOC denominator is physical source lines. Earlier versions counted statements there, a
+> much smaller number, so densities from this report are lower than — and not comparable with — ones
+> produced before the size metrics were separated.
 
 **Categories and current coverage:**
 

@@ -7,6 +7,24 @@ namespace CsharpMcp.CodeAnalysis;
 
 public static class TextFormatter
 {
+    // Metric scales
+    //
+    // A bare metric value is ambiguous: MI runs 0-100 with higher better, CC is unbounded with
+    // lower better, and the rating scale runs opposite to both. The library's legend says all of
+    // this in ~1.1k characters, which is too much to repeat on every response when the consumer
+    // is an agent making many metric calls a session. So each value carries its own verdict
+    // inline, and the full legend is a tool of its own — paid for only when asked for.
+    //
+    // Ratings come from MetricThresholds rather than from literals here: a copy would drift, and
+    // the server would start contradicting the review rules about the same member.
+
+    // Digit and word together, as the legend describes it: the digit alone gives no direction,
+    // and the rating scale runs the opposite way from the maintainability index beside it.
+    private static string Rating(MetricRating rating) => $"[{(int)rating} - {MetricThresholds.Label(rating)}]";
+
+    private static string RateMi(double maintainabilityIndex) =>
+        Rating(MetricThresholds.RateMaintainability(maintainabilityIndex));
+
     // Location-based formats
 
     public static string Format(Location? loc)
@@ -333,7 +351,9 @@ public static class TextFormatter
         {
             sb.Append("## ").AppendLine(ns.Name);
             sb.Append("LOC: ").Append(ns.LinesOfCode)
+              .Append("  Stmts: ").Append(ns.ExecutableStatements)
               .Append("  MI: ").Append(ns.MaintainabilityIndex.ToString("F1"))
+              .Append(' ').Append(RateMi(ns.MaintainabilityIndex))
               .Append("  CC: ").Append(ns.CyclomaticComplexity)
               .Append("  Abstractness: ").Append(ns.Abstractness.ToString("F2"))
               .Append("  DOI: ").Append(ns.DepthOfInheritance)
@@ -344,8 +364,10 @@ public static class TextFormatter
             {
                 sb.AppendLine();
                 sb.Append("  ").Append(type.Name)
-                  .Append(" (").Append(type.Kind).Append(", ").Append(type.AccessModifier).AppendLine(")");
+                  .Append(" (").Append(type.Kind).Append(", ").Append(type.AccessModifier).Append(')')
+                  .Append(' ').AppendLine(Rating(MetricThresholds.RateType(type)));
                 sb.Append("  LOC: ").Append(type.LinesOfCode)
+                  .Append("  Stmts: ").Append(type.ExecutableStatements)
                   .Append("  MI: ").Append(type.MaintainabilityIndex.ToString("F1"))
                   .Append("  CC: ").Append(type.CyclomaticComplexity)
                   .Append("  DOI: ").Append(type.DepthOfInheritance)
@@ -362,7 +384,9 @@ public static class TextFormatter
                         sb.Append(' ').Append(member.CodeFile).Append(':').Append(member.LineNumber);
                     sb.AppendLine();
                     sb.Append("    LOC: ").Append(member.LinesOfCode)
+                      .Append("  Stmts: ").Append(member.ExecutableStatements)
                       .Append("  MI: ").Append(member.MaintainabilityIndex.ToString("F1"))
+                      .Append(' ').Append(RateMi(member.MaintainabilityIndex))
                       .Append("  CC: ").Append(member.CyclomaticComplexity)
                       .Append("  Coupling: ").Append(member.ClassCoupling)
                       .Append("  Params: ").Append(member.NumberOfParameters)
@@ -387,8 +411,10 @@ public static class TextFormatter
         {
             sb.Append(ns.Name)
               .Append("  MI: ").Append(ns.MaintainabilityIndex.ToString("F1"))
+              .Append(' ').Append(RateMi(ns.MaintainabilityIndex))
               .Append("  CC: ").Append(ns.CyclomaticComplexity)
               .Append("  LOC: ").Append(ns.LinesOfCode)
+              .Append("  Stmts: ").Append(ns.ExecutableStatements)
               .Append("  Abstractness: ").Append(ns.Abstractness.ToString("F2"))
               .Append("  DOI: ").Append(ns.DepthOfInheritance)
               .Append("  Coupling: ").Append(ns.ClassCoupling)
@@ -412,12 +438,22 @@ public static class TextFormatter
             sb.Append(t.NamespaceName).Append('.').Append(t.Name)
               .Append(" (").Append(t.Kind).Append(", ").Append(t.AccessModifier).Append(')');
             if (t.IsAbstract) sb.Append(" [abstract]");
-            sb.AppendLine();
+            // The type's verdict is the worst of its metrics, matching MetricThresholds.RateType —
+            // which takes ITypeMetric and so cannot be handed a flat TypeSummary.
+            sb.Append(' ').AppendLine(Rating(MetricThresholds.Worst(
+            [
+                MetricThresholds.RateMaintainability(t.MaintainabilityIndex),
+                MetricThresholds.RateCyclomaticComplexity(t.CyclomaticComplexity),
+                MetricThresholds.RateDepthOfInheritance(t.DepthOfInheritance),
+                MetricThresholds.RateEfferentCoupling(t.EfferentCoupling),
+            ])));
             sb.Append("  MI: ").Append(t.MaintainabilityIndex.ToString("F1"))
               .Append("  CC: ").Append(t.CyclomaticComplexity)
               .Append("  LOC: ").Append(t.LinesOfCode)
+              .Append("  Stmts: ").Append(t.ExecutableStatements)
               .Append("  DOI: ").Append(t.DepthOfInheritance)
               .Append("  Coupling: ").Append(t.ClassCoupling)
+              .Append("  Efferent: ").Append(t.EfferentCoupling)
               .Append("  Instability: ").Append(t.Instability.ToString("F2"))
               .Append("  Members: ").Append(t.MemberCount)
               .AppendLine();
@@ -498,8 +534,10 @@ public static class TextFormatter
         foreach (var t in result.NewTypes)
             sb.Append("  ").Append(t.FullName)
               .Append("  MI: ").Append(t.MI.ToString("F1"))
+              .Append(' ').Append(RateMi(t.MI))
               .Append("  CC: ").Append(t.CC)
               .Append("  LOC: ").Append(t.LOC)
+              .Append("  Stmts: ").Append(t.Stmts)
               .AppendLine();
 
         // Removed types
@@ -537,6 +575,9 @@ public static class TextFormatter
             if (d.LOCDelta != 0)
                 sb.Append("  LOC: ").Append(b.LOC).Append(" -> ").Append(a.LOC)
                   .Append(" (").Append(FormatDelta(d.LOCDelta)).Append(')');
+            if (d.StmtsDelta != 0)
+                sb.Append("  Stmts: ").Append(b.Stmts).Append(" -> ").Append(a.Stmts)
+                  .Append(" (").Append(FormatDelta(d.StmtsDelta)).Append(')');
             if (d.CouplingDelta != 0)
                 sb.Append("  Coupling: ").Append(b.Coupling).Append(" -> ").Append(a.Coupling)
                   .Append(" (").Append(FormatDelta(d.CouplingDelta)).Append(')');

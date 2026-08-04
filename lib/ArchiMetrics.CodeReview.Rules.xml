@@ -1,0 +1,68 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>ArchiMetrics.CodeReview.Rules</name>
+    </assembly>
+    <members>
+        <member name="M:ArchiMetrics.CodeReview.Rules.Code.EvaluationBase.GetLinesOfCode(Microsoft.CodeAnalysis.SyntaxNode)">
+            <summary>
+            Gets the number of source lines the node occupies, for reporting how much code a violation
+            covers. Blank lines, comments and documentation are excluded.
+            </summary>
+        </member>
+        <member name="M:ArchiMetrics.CodeReview.Rules.Code.EvaluationBase.GetExecutableStatements(Microsoft.CodeAnalysis.SyntaxNode)">
+            <summary>
+            Gets the number of executable statements in the node.
+            </summary>
+            <remarks>
+            Size rules test against this rather than against physical lines so that reformatting a method —
+            wrapping a long argument list, splitting a condition over two lines — cannot push it over a
+            limit. A rule that fires on layout rather than on substance teaches developers to fight the tool.
+            </remarks>
+        </member>
+        <member name="M:ArchiMetrics.CodeReview.Rules.Code.MissingEventHandlerDetachmentRule.IsLikelyEventSubscription(Microsoft.CodeAnalysis.CSharp.Syntax.AssignmentExpressionSyntax)">
+            <summary>
+            Determines whether the right-hand side of a += expression is likely a delegate
+            or method group (i.e., an event subscription). Event handlers are assigned as
+            bare method names (<c>SomeEvent += Handler</c>), member accesses
+            (<c>SomeEvent += obj.Handler</c>), lambda expressions, or explicit delegate
+            constructors (<c>new EventHandler(Handler)</c>). Anything else — invocations,
+            literals, arithmetic — is not an event subscription.
+            </summary>
+        </member>
+        <member name="M:ArchiMetrics.CodeReview.Rules.Semantic.ClassInstabilityRule.IsReferencedFromTest(ArchiMetrics.Analysis.ReferenceResolvers.ReferenceLocation)">
+            <summary>
+            Test code depends on production code by design, so counting it would make a class look
+            more depended-upon - and therefore more stable - than it really is in the shipping
+            application. Only references from non-test code describe the real coupling.
+            </summary>
+        </member>
+        <member name="T:ArchiMetrics.CodeReview.Rules.Semantic.TooLowMaintainabilityIndexRule">
+            <summary>
+            Flags methods whose maintainability index has fallen far enough that changing them is likely
+            to be slow and error-prone.
+            </summary>
+            <remarks>
+            The trigger point comes from <see cref="F:ArchiMetrics.Analysis.Common.Metrics.MetricThresholds.Maintainability.NeedsRefactoring"/>
+            rather than a literal in this file. Sharing it with the reporting side is what stops the tool
+            from contradicting itself — a summary describing a method as merely "Concerning" while this
+            rule reports the same method as a defect would leave the reader with no idea which to trust.
+            </remarks>
+        </member>
+        <member name="M:ArchiMetrics.CodeReview.Rules.Semantic.TooLowMaintainabilityIndexRule.#ctor(System.Int32)">
+            <summary>
+            Initialises the rule with a custom trigger point, for callers who want to be stricter or
+            more lenient than the library default.
+            </summary>
+            <param name="threshold">
+            A maintainability index on the 0-100 scale. Methods at or below it are reported.
+            </param>
+        </member>
+        <member name="P:ArchiMetrics.CodeReview.Rules.Semantic.TooLowMaintainabilityIndexRule.Threshold">
+            <summary>
+            Gets the maintainability index at or below which a method is reported. On the 0-100
+            maintainability scale, where higher is better.
+            </summary>
+        </member>
+    </members>
+</doc>

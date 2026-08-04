@@ -8,6 +8,7 @@ public record TypeMetricEntry(
     double MI,
     int CC,
     int LOC,
+    int Stmts,
     int Coupling,
     double Instability);
 
@@ -22,6 +23,7 @@ public record TypeDelta(
     double MIDelta,
     int CCDelta,
     int LOCDelta,
+    int StmtsDelta,
     int CouplingDelta);
 
 public record QualityComparison(
@@ -54,7 +56,7 @@ public static class QualityTools
             var fullName = $"{t.NamespaceName}.{t.Name}";
             typeMetrics.TryAdd(fullName, new TypeMetricEntry(
                 fullName, t.MaintainabilityIndex, t.CyclomaticComplexity,
-                t.LinesOfCode, t.ClassCoupling, t.Instability));
+                t.LinesOfCode, t.ExecutableStatements, t.ClassCoupling, t.Instability));
         }
 
         return new QualitySnapshot(DateTime.Now, errorCount, warningCount, typeMetrics);
@@ -79,12 +81,13 @@ public static class QualityTools
             var miDelta = a.MI - b.MI;
             var ccDelta = a.CC - b.CC;
             var locDelta = a.LOC - b.LOC;
+            var stmtsDelta = a.Stmts - b.Stmts;
             var couplingDelta = a.Coupling - b.Coupling;
 
-            if (Math.Abs(miDelta) < 0.1 && ccDelta == 0 && locDelta == 0 && couplingDelta == 0)
+            if (Math.Abs(miDelta) < 0.1 && ccDelta == 0 && locDelta == 0 && stmtsDelta == 0 && couplingDelta == 0)
                 continue; // no meaningful change
 
-            var delta = new TypeDelta(key, miDelta, ccDelta, locDelta, couplingDelta);
+            var delta = new TypeDelta(key, miDelta, ccDelta, locDelta, stmtsDelta, couplingDelta);
 
             // Classify by MI direction (higher MI = better)
             if (miDelta > 0.1)
@@ -95,8 +98,13 @@ public static class QualityTools
                 improved.Add(delta);
             else if (ccDelta > 0)
                 degraded.Add(delta);
+            // MI and CC both held: the type only changed size or coupling, so judge by whether it
+            // shrank. Counting any such change as an improvement would report a type that merely
+            // grew as progress.
+            else if (locDelta < 0 || stmtsDelta < 0 || couplingDelta < 0)
+                improved.Add(delta);
             else
-                improved.Add(delta); // LOC/coupling improved with stable MI
+                degraded.Add(delta);
         }
 
         // New types (in after but not before)
