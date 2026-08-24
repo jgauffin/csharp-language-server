@@ -235,15 +235,58 @@ public static class TextFormatter
 
     // Rename
 
-    public static string Format(RefactoringTools.RenamePreview preview)
+    /// <summary>
+    /// Renders a rename preview as one line per edit site, so the caller can judge the
+    /// blast radius and jump to any location. Never emits file contents.
+    /// </summary>
+    public static string Format(RefactoringTools.RenamePreview preview, int maxChangesShown = 100)
     {
+        if (preview.Changes.Count == 0 && preview.RenamedFiles.Count == 0)
+            return "No changes; nothing references this symbol.";
+
         var sb = new StringBuilder();
         sb.Append("Rename to: ").AppendLine(preview.NewName);
-        foreach (var c in preview.Changes)
+        sb.Append(preview.Changes.Count).Append(" edit(s) in ")
+          .Append(preview.AffectedFiles.Count).AppendLine(" file(s)");
+
+        foreach (var f in preview.RenamedFiles)
+            sb.Append("File rename: ").Append(f.OldFilePath).Append(" → ").AppendLine(f.NewFilePath);
+
+        var shown = Math.Min(maxChangesShown, preview.Changes.Count);
+        for (var i = 0; i < shown; i++)
+        {
+            var c = preview.Changes[i];
             sb.Append("  ").Append(c.FilePath).Append(':').Append(c.Line).Append(':').Append(c.Column)
               .Append(" \"").Append(c.OldText).Append("\" → \"").Append(c.NewText).AppendLine("\"");
-        if (preview.AffectedFiles.Count > 0)
-            sb.Append("Affected files: ").AppendLine(string.Join(", ", preview.AffectedFiles));
+        }
+
+        if (preview.Changes.Count > shown)
+        {
+            var remainingFiles = preview.Changes.Skip(shown).Select(c => c.FilePath).Distinct().Count();
+            sb.Append("  ... and ").Append(preview.Changes.Count - shown)
+              .Append(" more in ").Append(remainingFiles).AppendLine(" file(s)");
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>
+    /// Renders the outcome of an executed rename as a receipt: what changed and where,
+    /// without restating edits the caller can read back from disk.
+    /// </summary>
+    public static string FormatRenameResult(RefactoringTools.RenamePreview result)
+    {
+        var sb = new StringBuilder();
+        sb.Append("Renamed to ").Append(result.NewName).Append(": ")
+          .Append(result.Changes.Count).Append(" edit(s) in ")
+          .Append(result.AffectedFiles.Count).AppendLine(" file(s), written to disk.");
+
+        foreach (var f in result.RenamedFiles)
+            sb.Append("File renamed: ").Append(f.OldFilePath).Append(" → ").AppendLine(f.NewFilePath);
+
+        foreach (var f in result.EditsPerFile)
+            sb.Append("  ").Append(f.FilePath).Append(": ").Append(f.EditCount).AppendLine(" edit(s)");
+
         return sb.ToString().TrimEnd();
     }
 

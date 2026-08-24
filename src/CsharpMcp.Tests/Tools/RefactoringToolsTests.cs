@@ -155,6 +155,135 @@ public class RefactoringToolsTests : IAsyncLifetime
         actual.Changes.Count.ShouldBe(preview.Changes.Count);
     }
 
+    // ── output size guarantees ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task RenamePreview_OfMethod_ReportsOnlyIdentifierSwaps_NotWholeFileContents()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 7, Column: 16);
+
+        var preview = await RefactoringTools.RenamePreviewAsync(
+            _workspace.Solution, pos, newName: "Sum");
+
+        preview.Changes.ShouldNotBeEmpty();
+        foreach (var change in preview.Changes)
+        {
+            change.OldText.ShouldBe("Add");
+            change.NewText.ShouldBe("Sum");
+        }
+    }
+
+    [Fact]
+    public async Task RenamePreview_OfTypeThatAlsoRenamesItsFile_ReportsOnlyIdentifierSwaps()
+    {
+        // Renaming a type also renames its document, which is the case where Roslyn's
+        // change ranges collapse to a single span covering the entire file.
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 4, Column: 14);
+
+        var preview = await RefactoringTools.RenamePreviewAsync(
+            _workspace.Solution, pos, newName: "MathHelper");
+
+        preview.Changes.ShouldNotBeEmpty();
+        foreach (var change in preview.Changes)
+        {
+            change.OldText.ShouldBe("Calculator");
+            change.NewText.ShouldBe("MathHelper");
+        }
+    }
+
+    [Fact]
+    public async Task RenamePreview_NeverEmitsSourceLinesSuchAsNamespaceDeclarations()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 4, Column: 14);
+
+        var preview = await RefactoringTools.RenamePreviewAsync(
+            _workspace.Solution, pos, newName: "MathHelper");
+
+        var rendered = TextFormatter.Format(preview);
+
+        // Whole-file leakage would drag surrounding source into the output.
+        rendered.ShouldNotContain("namespace LibA");
+        rendered.ShouldNotContain("public int Multiply");
+        rendered.ShouldNotContain("<summary>");
+    }
+
+    [Fact]
+    public async Task RenameSymbol_WithoutFileRename_ReportsNoRenamedFiles()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 7, Column: 16);
+
+        var result = await RefactoringTools.RenameSymbolAsync(_workspace, pos, "Sum");
+
+        result.RenamedFiles.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RenameResultOutput_AnnouncesFileMoves_SoAgentsCanUpdateCachedPaths()
+    {
+        // Reporting contract for a moved file, exercised directly: an executed rename that
+        // moves a document must name both paths, because that is the one effect a caller
+        // cannot infer from the edit list.
+        var result = new RefactoringTools.RenamePreview(
+            "MathHelper",
+            Changes: [],
+            AffectedFiles: [],
+            RenamedFiles: [new RefactoringTools.RenamedFile(
+                FilePath("LibA", "Calculator.cs"), FilePath("LibA", "MathHelper.cs"))],
+            EditsPerFile: []);
+
+        var rendered = TextFormatter.FormatRenameResult(result);
+
+        rendered.ShouldContain("Calculator.cs");
+        rendered.ShouldContain("MathHelper.cs");
+        rendered.ShouldContain("→");
+    }
+
+    [Fact]
+    public async Task RenamePreview_ListsEveryEditSiteWithItsLocation()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 7, Column: 16);
+
+        var preview = await RefactoringTools.RenamePreviewAsync(
+            _workspace.Solution, pos, newName: "Sum");
+
+        var rendered = TextFormatter.Format(preview);
+
+        // Declaration site plus the App call site, each addressable as file:line:col.
+        rendered.ShouldContain("Calculator.cs:7:16");
+        rendered.ShouldContain("Program.cs:15:27");
+        rendered.ShouldContain("\"Add\" → \"Sum\"");
+    }
+
+    [Fact]
+    public async Task RenameExecuteOutput_IsAReceipt_NotAListOfEveryEdit()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 7, Column: 16);
+
+        var result = await RefactoringTools.RenameSymbolAsync(_workspace, pos, "Sum");
+        var rendered = TextFormatter.FormatRenameResult(result);
+
+        rendered.ShouldContain("Renamed");
+        rendered.ShouldContain("Sum");
+        // Per-file tallies, not per-edit lines with column positions.
+        rendered.ShouldContain("edit");
+        rendered.ShouldNotContain("Calculator.cs:7:16");
+    }
+
+    [Fact]
+    public async Task RenamePreview_TruncatesLongChangeListsAndSaysHowManyRemain()
+    {
+        var pos = new Position(FilePath("LibA", "Calculator.cs"), Line: 7, Column: 16);
+
+        var preview = await RefactoringTools.RenamePreviewAsync(
+            _workspace.Solution, pos, newName: "Sum");
+
+        // Force truncation well below the real change count.
+        var rendered = TextFormatter.Format(preview, maxChangesShown: 1);
+
+        rendered.ShouldContain("and ");
+        rendered.ShouldContain("more");
+    }
+
     [Fact]
     public async Task RenameSymbol_WithCompilationErrors_ThrowsBeforeWriting()
     {

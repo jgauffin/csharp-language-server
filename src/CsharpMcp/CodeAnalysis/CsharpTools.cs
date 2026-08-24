@@ -104,19 +104,20 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
                 () => DiagnosticsTools.GetAllDiagnosticsAsync(workspace.Solution, projectName, minSeverity, skip, take, workspace.GetCompilationAsync),
                 TextFormatter.Format);
 
-    [McpServerTool, Description("Rename a symbol across all projects. Set preview=true (default) to preview impact without writing. Set preview=false to execute the rename and write to disk. line/column must point to the identifier (1-based). Use find or get_outline to locate symbols.")]
+    [McpServerTool, Description("Rename a symbol across all projects. Set preview=true (default) to list every edit site (file:line:col) without writing. Set preview=false to execute the rename and write to disk, returning a summary of edits per file plus any file renames. line/column must point to the identifier (1-based). Use find or get_outline to locate symbols.")]
     public Task<string> rename(
         string filePath, int line, int column, string newName,
-        [Description("Preview only (true) or execute rename (false)")] bool preview = true) =>
+        [Description("Preview only (true) or execute rename (false)")] bool preview = true,
+        [Description("Max edit sites listed in a preview before truncating")] int maxChangesShown = 100) =>
         preview
             ? Safe(
                 () => RefactoringTools.RenamePreviewAsync(
                     workspace.Solution, new Position(filePath, line, column), newName),
-                TextFormatter.Format)
+                p => TextFormatter.Format(p, maxChangesShown))
             : Safe(
                 () => RefactoringTools.RenameSymbolAsync(
                     workspace, new Position(filePath, line, column), newName),
-                TextFormatter.Format);
+                TextFormatter.FormatRenameResult);
 
     [McpServerTool, Description("Format a document using the Roslyn formatter.")]
     public Task<string> format_document(string filePath) =>
