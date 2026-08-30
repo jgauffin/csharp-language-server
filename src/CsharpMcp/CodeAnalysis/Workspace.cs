@@ -581,6 +581,18 @@ public sealed class RoslynWorkspace : IDisposable
     }
 
     /// <summary>
+    /// Updates the in-memory solution snapshot to a post-rename solution without letting
+    /// MSBuildWorkspace write to disk. The caller is responsible for persisting files itself
+    /// (see <see cref="Tools.RefactoringTools"/>), which avoids ApplyChanges relocating renamed
+    /// documents to the project root. The FileSystemWatcher still reconciles the same edits, so
+    /// this just lets reads see the new state immediately instead of waiting for the next flush.
+    /// </summary>
+    public void SyncRenamedSolution(Solution solution)
+    {
+        lock (_lock) _currentSolution = solution;
+    }
+
+    /// <summary>
     /// Returns the path to a solution file at the workspace root, or null if none exist.
     /// Checks only the top-level directory — nested solutions (in samples, tests-of-tests,
     /// etc.) are intentionally ignored.
