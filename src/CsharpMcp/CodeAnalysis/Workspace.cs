@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -17,7 +18,11 @@ public sealed class RoslynWorkspace : IDisposable
 {
     private readonly MSBuildWorkspace _workspace;
     private readonly FileSystemWatcher _watcher;
-    private readonly ConcurrentQueue<FileChange> _pendingChanges = new();
+    // Keyed by path rather than queued: ApplyPendingChanges collapses to the last change per file
+    // anyway, so a queue would grow with the event count while an idle server never drains it.
+    // Bounded by the number of distinct files touched, and by MaxPendingChanges beyond that.
+    private readonly ConcurrentDictionary<string, ChangeKind> _pendingChanges = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaxPendingChanges = 10_000;
     private readonly Lock _lock = new();
     private readonly ILogger<RoslynWorkspace> _logger;
     private Solution _currentSolution;
@@ -56,8 +61,20 @@ public sealed class RoslynWorkspace : IDisposable
     // projectName (no extension) -> Project
     private readonly Dictionary<string, Project> _projects = new(StringComparer.OrdinalIgnoreCase);
 
-    private enum ChangeKind { Updated, Deleted, Renamed }
-    private readonly record struct FileChange(string FullPath, ChangeKind Kind, string? OldFullPath = null);
+    private enum ChangeKind { Updated, Deleted }
+
+    // Directory walks skip reparse points. Package managers (bun, pnpm) link package directories
+    // back at their own ancestors, and following one makes discovery recurse until the process is
+    // killed, with the walker's path stack growing every lap. DiscoveryTimeout catches any cycle
+    // that survives that, so a runaway walk reports itself instead of never becoming ready.
+    private static readonly EnumerationOptions ShallowOptions = new()
+    {
+        RecurseSubdirectories = false,
+        IgnoreInaccessible = true,
+        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint,
+        MatchType = MatchType.Simple,
+    };
+    private static readonly TimeSpan DiscoveryTimeout = TimeSpan.FromMinutes(2);
 
     static RoslynWorkspace()
     {
@@ -104,15 +121,14 @@ public sealed class RoslynWorkspace : IDisposable
         };
         // Filter at the source: in a mixed-language repo the watcher fires for .cs files
         // anywhere under root (e.g. inside bin/, obj/, or a transitive node_modules), and we
-        // don't want those swelling the pending queue.
-        _watcher.Changed += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Updated);
-        _watcher.Created += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Updated);
-        _watcher.Deleted += (_, e) => EnqueueIfTracked(e.FullPath, ChangeKind.Deleted);
+        // don't want those swelling the pending set.
+        _watcher.Changed += (_, e) => TrackChange(e.FullPath, ChangeKind.Updated);
+        _watcher.Created += (_, e) => TrackChange(e.FullPath, ChangeKind.Updated);
+        _watcher.Deleted += (_, e) => TrackChange(e.FullPath, ChangeKind.Deleted);
         _watcher.Renamed += (_, e) =>
         {
-            var full = Path.GetFullPath(e.FullPath);
-            if (IsExcludedPath(full)) return;
-            _pendingChanges.Enqueue(new(full, ChangeKind.Renamed, Path.GetFullPath(e.OldFullPath)));
+            TrackChange(e.OldFullPath, ChangeKind.Deleted);
+            TrackChange(e.FullPath, ChangeKind.Updated);
         };
         _watcher.Error += (_, e) =>
         {
@@ -121,11 +137,49 @@ public sealed class RoslynWorkspace : IDisposable
         };
     }
 
-    private void EnqueueIfTracked(string path, ChangeKind kind)
+    private void TrackChange(string path, ChangeKind kind)
     {
         var full = Path.GetFullPath(path);
         if (IsExcludedPath(full)) return;
-        _pendingChanges.Enqueue(new(full, kind));
+        _pendingChanges[full] = kind;
+
+        if (_pendingChanges.Count <= MaxPendingChanges) return;
+        _logger.LogWarning("More than {Max} files changed without a tool call — scheduling full resync", MaxPendingChanges);
+        _fullResyncNeeded = true;
+        _pendingChanges.Clear();
+    }
+
+    /// <summary>
+    /// Enumerates files matching <paramref name="pattern"/> under <paramref name="root"/>, pruning
+    /// excluded directories as it descends rather than filtering the results, and never following
+    /// reparse points. Throws if the walk outlives <see cref="DiscoveryTimeout"/>.
+    /// </summary>
+    public static IEnumerable<string> EnumerateFiles(string root, string pattern, TimeSpan? timeout = null)
+    {
+        var limit = timeout ?? DiscoveryTimeout;
+        var deadline = Stopwatch.StartNew();
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            if (deadline.Elapsed >= limit)
+                throw new TimeoutException(
+                    $"Directory walk under '{root}' exceeded {limit.TotalSeconds:0}s. " +
+                    "This usually means a directory cycle: a symlink or junction pointing back at an ancestor.");
+
+            var dir = pending.Pop();
+
+            foreach (var file in Directory.EnumerateFiles(dir, pattern, ShallowOptions))
+                yield return file;
+
+            foreach (var sub in Directory.EnumerateDirectories(dir, "*", ShallowOptions))
+            {
+                // IsExcludedPath matches "/name/", so a directory needs its trailing separator.
+                if (IsExcludedPath(sub + Path.DirectorySeparatorChar)) continue;
+                pending.Push(sub);
+            }
+        }
     }
 
     /// <summary>
@@ -141,54 +195,37 @@ public sealed class RoslynWorkspace : IDisposable
             if (_fullResyncNeeded)
             {
                 _fullResyncNeeded = false;
-                // Drain stale queue
-                while (_pendingChanges.TryDequeue(out _)) { }
+                // Drain stale changes
+                _pendingChanges.Clear();
                 FullResync();
                 return;
             }
 
             if (_pendingChanges.IsEmpty) return;
 
-            var changes = new List<FileChange>();
-            while (_pendingChanges.TryDequeue(out var change))
-                changes.Add(change);
+            // Take the set, so a change arriving mid-apply survives for the next flush.
+            var changes = new List<KeyValuePair<string, ChangeKind>>(_pendingChanges.Count);
+            foreach (var path in _pendingChanges.Keys)
+            {
+                if (_pendingChanges.TryRemove(path, out var kind))
+                    changes.Add(new(path, kind));
+            }
 
             _logger.LogDebug("Applying {Count} pending file changes", changes.Count);
 
-            // Deduplicate: keep the LAST change per file path so we don't
-            // process a stale Update when a later Delete was the final state.
-            var lastChange = new Dictionary<string, FileChange>(StringComparer.OrdinalIgnoreCase);
-            foreach (var change in changes)
-            {
-                lastChange[change.FullPath] = change;
-                // For renames, also process the removal of the old path
-                if (change.Kind == ChangeKind.Renamed && change.OldFullPath is not null)
-                    lastChange[change.OldFullPath] = new(change.OldFullPath, ChangeKind.Deleted);
-            }
-
             var solution = _currentSolution;
 
-            foreach (var change in lastChange.Values)
+            foreach (var (path, kind) in changes)
             {
-                switch (change.Kind)
+                if (kind == ChangeKind.Deleted)
                 {
-                    case ChangeKind.Deleted:
-                    {
-                        var docId = solution.GetDocumentIdsWithFilePath(change.FullPath).FirstOrDefault();
-                        if (docId is not null)
-                            solution = solution.RemoveDocument(docId);
-                        break;
-                    }
-                    case ChangeKind.Renamed:
-                    {
-                        // Old path already handled as a Deleted entry above
-                        solution = AddOrUpdateDocument(solution, change.FullPath);
-                        break;
-                    }
-                    case ChangeKind.Updated:
-                    default:
-                        solution = AddOrUpdateDocument(solution, change.FullPath);
-                        break;
+                    var docId = solution.GetDocumentIdsWithFilePath(path).FirstOrDefault();
+                    if (docId is not null)
+                        solution = solution.RemoveDocument(docId);
+                }
+                else
+                {
+                    solution = AddOrUpdateDocument(solution, path);
                 }
             }
 
@@ -209,12 +246,8 @@ public sealed class RoslynWorkspace : IDisposable
 
         // Collect all .cs files currently on disk
         var diskFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in Directory.GetFiles(RootPath, "*.cs", SearchOption.AllDirectories))
-        {
-            var fullPath = Path.GetFullPath(file);
-            if (IsExcludedPath(fullPath)) continue;
-            diskFiles.Add(fullPath);
-        }
+        foreach (var file in EnumerateFiles(RootPath, "*.cs"))
+            diskFiles.Add(Path.GetFullPath(file));
 
         // Remove documents that no longer exist on disk
         foreach (var project in solution.Projects)
@@ -258,8 +291,8 @@ public sealed class RoslynWorkspace : IDisposable
         }
         catch (IOException)
         {
-            // File may be locked; re-enqueue for next flush
-            _pendingChanges.Enqueue(new(filePath, ChangeKind.Updated));
+            // File may be locked; retry on the next flush
+            _pendingChanges[filePath] = ChangeKind.Updated;
             return solution;
         }
     }
@@ -338,8 +371,8 @@ public sealed class RoslynWorkspace : IDisposable
             }
             else
             {
-                var filter = projectFilter ?? (p => !IsExcludedPath(p));
-                var csprojFiles = Directory.GetFiles(RootPath, "*.csproj", SearchOption.AllDirectories)
+                var filter = projectFilter ?? (_ => true);
+                var csprojFiles = EnumerateFiles(RootPath, "*.csproj")
                     .Where(filter)
                     .ToArray();
                 _totalProjects = csprojFiles.Length;

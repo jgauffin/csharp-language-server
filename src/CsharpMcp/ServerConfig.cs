@@ -8,7 +8,11 @@ public sealed record ServerConfig(
     bool EnableQuality = true,
     bool EnableNuget = true)
 {
-    public static ServerConfig Parse(string[] args)
+    /// <summary>Parses the command line, rooting the server at the directory it was launched in.</summary>
+    public static ServerConfig Parse(string[] args) => Parse(args, Directory.GetCurrentDirectory());
+
+    /// <summary>Parses the command line against an explicit launch directory.</summary>
+    public static ServerConfig Parse(string[] args, string launchDirectory)
     {
         string? name = null;
         string? description = null;
@@ -23,6 +27,8 @@ public sealed record ServerConfig(
                 name = args[++i];
             else if (args[i] == "--description" && i + 1 < args.Length)
                 description = args[++i];
+            else if (args[i] == "--root" && i + 1 < args.Length)
+                directory = args[++i];
             else if (args[i] == "--allowed-dir" && i + 1 < args.Length)
                 allowedDir = args[++i];
             else if (args[i] == "--no-quality")
@@ -33,12 +39,15 @@ public sealed record ServerConfig(
                 directory ??= args[i];
         }
 
-        var rootPath = Path.GetFullPath(directory ?? Directory.GetCurrentDirectory());
+        // The root is bound to the launch directory once, here, and every path downstream resolves
+        // against it. Reading the working directory again later would silently repoint the workspace.
+        var launchRoot = Path.GetFullPath(launchDirectory);
+        var rootPath = Path.GetFullPath(directory ?? launchRoot, launchRoot);
 
         if (!Directory.Exists(rootPath))
             throw new ArgumentException($"Root path does not exist: {rootPath}");
 
-        var resolvedAllowedDir = Path.GetFullPath(allowedDir ?? rootPath);
+        var resolvedAllowedDir = Path.GetFullPath(allowedDir ?? rootPath, launchRoot);
         if (!Directory.Exists(resolvedAllowedDir))
             throw new ArgumentException($"Allowed directory does not exist: {resolvedAllowedDir}");
 

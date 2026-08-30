@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
 var config = ServerConfig.Parse(args);
+var serverVersion = typeof(ServerConfig).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
 // Refuse to start in a non-.NET directory before any heavy init (MSBuildLocator,
 // MSBuildWorkspace, ONNX model). Scanning a non-.NET tree was costing ~8GB RAM.
@@ -16,8 +17,12 @@ if (!HasDotNetProject(config.RootPath))
     return 1;
 }
 
-// Build a temporary logger factory for workspace loading (before host is built)
-using var earlyLoggerFactory = LoggerFactory.Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Information));
+// Build a temporary logger factory for workspace loading (before host is built).
+// All console logging goes to stderr: stdout is the MCP stdio transport, so anything
+// written there is parsed as protocol, rejected by the client and lost.
+using var earlyLoggerFactory = LoggerFactory.Create(b => b
+    .AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace)
+    .SetMinimumLevel(LogLevel.Information));
 // Load in the background so the MCP server can start responding immediately.
 // Tools check workspace.IsReady and return a "still loading" response until load completes.
 var workspace = RoslynWorkspace.Create(config.RootPath, earlyLoggerFactory);
@@ -25,6 +30,7 @@ var workspace = RoslynWorkspace.Create(config.RootPath, earlyLoggerFactory);
 var agent = new CodeAnalysisAgent(workspace.InnerWorkspace, config.RootPath);
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 var services = builder.Services
     .AddSingleton(config)
     .AddSingleton(workspace)
@@ -32,7 +38,7 @@ var services = builder.Services
     .AddSingleton<CsharpTools>()
     .AddMcpServer(options =>
     {
-        options.ServerInfo = new Implementation { Name = config.Name, Version = "1.0.0" };
+        options.ServerInfo = new Implementation { Name = config.Name, Version = serverVersion };
         var instructions = "C# and NuGet code intelligence server powered by Roslyn. Provides navigation, type info, diagnostics, refactoring, and NuGet package exploration for .NET projects.";
         if (config.Description is not null)
             instructions += " " + config.Description;
@@ -52,21 +58,13 @@ return 0;
 
 static bool HasDotNetProject(string rootPath)
 {
-    var enumOpts = new EnumerationOptions
-    {
-        RecurseSubdirectories = true,
-        IgnoreInaccessible = true,
-        AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
-        MatchType = MatchType.Simple,
-    };
-
+    // Shares RoslynWorkspace's walk, which prunes excluded directories and refuses to follow
+    // reparse points. This guard runs before anything can report status, so a walk that never
+    // returns here would hang the server with no way to say why.
     foreach (var pattern in new[] { "*.csproj", "*.sln", "*.slnx", "*.slnf" })
     {
-        foreach (var path in Directory.EnumerateFiles(rootPath, pattern, enumOpts))
-        {
-            if (RoslynWorkspace.IsExcludedPath(path)) continue;
+        if (RoslynWorkspace.EnumerateFiles(rootPath, pattern).Any())
             return true;
-        }
     }
     return false;
 }
