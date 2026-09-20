@@ -18,6 +18,11 @@ public sealed class RoslynWorkspace : IDisposable
 {
     private readonly MSBuildWorkspace _workspace;
     private readonly FileSystemWatcher _watcher;
+    // Separate watcher for MSBuild files. A .cs edit only changes a document's text, but a
+    // build-file edit changes what the project *is* — its package and project references,
+    // its compilation options. Those can only be recovered by re-evaluating MSBuild, so they
+    // are tracked apart from the document-level changes above.
+    private readonly FileSystemWatcher _buildFileWatcher;
     // Keyed by path rather than queued: ApplyPendingChanges collapses to the last change per file
     // anyway, so a queue would grow with the event count while an idle server never drains it.
     // Bounded by the number of distinct files touched, and by MaxPendingChanges beyond that.
@@ -27,6 +32,16 @@ public sealed class RoslynWorkspace : IDisposable
     private readonly ILogger<RoslynWorkspace> _logger;
     private Solution _currentSolution;
     private volatile bool _fullResyncNeeded;
+
+    // Set when a build file changes; cleared by the reload on the next solution read.
+    // The reload is lazy rather than eager because re-evaluating MSBuild costs seconds on a
+    // large solution, and a burst of build-file writes (a restore, a branch switch) would
+    // otherwise trigger one reload per file instead of a single reload before the next answer.
+    private volatile bool _projectModelDirty;
+    private int _projectModelReloadCount;
+    private readonly Func<string, bool> _projectFilter;
+    // Serializes reloads without holding _lock across the async MSBuild evaluation.
+    private readonly SemaphoreSlim _reloadGate = new(1, 1);
 
     // Background loading state. Tools check IsReady before touching the solution so
     // MCP requests return a fast "still loading" response instead of timing out.
@@ -106,11 +121,12 @@ public sealed class RoslynWorkspace : IDisposable
         }
     }
 
-    private RoslynWorkspace(MSBuildWorkspace workspace, string rootPath, ILogger<RoslynWorkspace> logger)
+    private RoslynWorkspace(MSBuildWorkspace workspace, string rootPath, ILogger<RoslynWorkspace> logger, Func<string, bool>? projectFilter)
     {
         RootPath = rootPath;
         _workspace = workspace;
         _logger = logger;
+        _projectFilter = projectFilter ?? (_ => true);
         _currentSolution = workspace.CurrentSolution;
         _watcher = new FileSystemWatcher(rootPath, "*.cs")
         {
@@ -135,6 +151,62 @@ public sealed class RoslynWorkspace : IDisposable
             _logger.LogWarning(e.GetException(), "FileSystemWatcher buffer overflow — scheduling full resync");
             _fullResyncNeeded = true;
         };
+
+        // Filter "*" rather than a per-extension watcher: FileSystemWatcher takes one pattern,
+        // and IsBuildFile below is cheaper than running five overlapping watchers.
+        _buildFileWatcher = new FileSystemWatcher(rootPath, "*")
+        {
+            IncludeSubdirectories = true,
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName,
+            InternalBufferSize = 65536,
+            EnableRaisingEvents = true
+        };
+        _buildFileWatcher.Changed += (_, e) => TrackBuildFileChange(e.FullPath);
+        _buildFileWatcher.Created += (_, e) => TrackBuildFileChange(e.FullPath);
+        _buildFileWatcher.Deleted += (_, e) => TrackBuildFileChange(e.FullPath);
+        _buildFileWatcher.Renamed += (_, e) =>
+        {
+            TrackBuildFileChange(e.OldFullPath);
+            TrackBuildFileChange(e.FullPath);
+        };
+        _buildFileWatcher.Error += (_, e) =>
+        {
+            // Losing build-file events silently is what left the project model stale in the
+            // first place, so an overflow here forces a reload rather than being ignored.
+            _logger.LogWarning(e.GetException(), "Build-file watcher buffer overflow — scheduling project model reload");
+            _projectModelDirty = true;
+        };
+    }
+
+    private void TrackBuildFileChange(string path)
+    {
+        var full = Path.GetFullPath(path);
+        if (IsExcludedPath(full)) return;
+        if (!IsBuildFile(full)) return;
+
+        _logger.LogInformation("Build file changed ({Path}) — project model will reload on next use", full);
+        _projectModelDirty = true;
+    }
+
+    /// <summary>
+    /// True for files whose contents determine what a project references or how it compiles:
+    /// the project and solution files themselves, and the central build files that MSBuild
+    /// imports into every project without any csproj mentioning them.
+    /// </summary>
+    private static bool IsBuildFile(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".slnf", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return name.Equals("Directory.Build.props", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Directory.Build.targets", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Directory.Packages.props", StringComparison.OrdinalIgnoreCase);
     }
 
     private void TrackChange(string path, ChangeKind kind)
@@ -188,6 +260,10 @@ public sealed class RoslynWorkspace : IDisposable
     /// </summary>
     private void ApplyPendingChanges()
     {
+        // The project model is reloaded before source changes are applied: a reload rebuilds
+        // the solution from disk, so applying document edits first would just discard them.
+        if (_projectModelDirty) ReloadProjectModel();
+
         if (_pendingChanges.IsEmpty && !_fullResyncNeeded) return;
 
         lock (_lock)
@@ -324,7 +400,7 @@ public sealed class RoslynWorkspace : IDisposable
     {
         var logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<RoslynWorkspace>();
         var workspace = MSBuildWorkspace.Create();
-        var instance = new RoslynWorkspace(workspace, rootPath, logger);
+        var instance = new RoslynWorkspace(workspace, rootPath, logger, projectFilter);
         instance._readyTask = Task.Run(() => instance.LoadInBackgroundAsync(projectFilter));
         return instance;
     }
@@ -344,6 +420,41 @@ public sealed class RoslynWorkspace : IDisposable
     private async Task LoadInBackgroundAsync(Func<string, bool>? projectFilter)
     {
         try
+        {
+            await LoadProjectsAsync(projectFilter).ConfigureAwait(false);
+
+            lock (_lock)
+            {
+                _currentSolution = _workspace.CurrentSolution;
+            }
+
+            foreach (var diag in _workspace.Diagnostics)
+            {
+                _logger.LogWarning("MSBuild: {Message}", diag.Message);
+            }
+
+            _isReady = true;
+            _logger.LogInformation("Workspace ready: {ProjectCount} projects loaded, warming compilations in background", _projects.Count);
+
+            // Fire-and-forget compilation warming. Tools don't need this to be complete;
+            // they just pay the compilation cost on first use without it.
+            _ = Task.Run(WarmCompilationsInBackgroundAsync);
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+            _logger.LogError(ex, "Workspace background load failed");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Evaluates the build files and populates the workspace with projects. Shared by the
+    /// initial load and by <see cref="ReloadProjectModel"/>, so a reload discovers projects
+    /// exactly the way startup did — including ones added since.
+    /// </summary>
+    private async Task LoadProjectsAsync(Func<string, bool>? projectFilter)
+    {
         {
             // Prefer a solution file at the root when present — it's authoritative about which
             // projects belong to the workspace, avoids a recursive directory walk, and won't
@@ -407,29 +518,95 @@ public sealed class RoslynWorkspace : IDisposable
                     Interlocked.Increment(ref _loadedProjects);
                 }
             }
-
-            lock (_lock)
-            {
-                _currentSolution = _workspace.CurrentSolution;
-            }
-
-            foreach (var diag in _workspace.Diagnostics)
-            {
-                _logger.LogWarning("MSBuild: {Message}", diag.Message);
-            }
-
-            _isReady = true;
-            _logger.LogInformation("Workspace ready: {ProjectCount} projects loaded, warming compilations in background", _projects.Count);
-
-            // Fire-and-forget compilation warming. Tools don't need this to be complete;
-            // they just pay the compilation cost on first use without it.
-            _ = Task.Run(WarmCompilationsInBackgroundAsync);
         }
-        catch (Exception ex)
+    }
+
+    /// <summary>
+    /// Number of times the project model has been re-evaluated since startup. Exposed so tests
+    /// can prove a reload happens when a build file changes — and, just as importantly, that an
+    /// ordinary source edit does not trigger one.
+    /// </summary>
+    public int ProjectModelReloadCount => Volatile.Read(ref _projectModelReloadCount);
+
+    /// <summary>
+    /// Re-evaluates every project's build files, picking up packages, project references and
+    /// compilation options added since the last load. Without this the project model is frozen
+    /// at startup: a type from a dependency added later reports as missing until the server
+    /// restarts. Source edits that are still pending survive, because they are re-applied from
+    /// disk after the rebuild.
+    /// </summary>
+    private void ReloadProjectModel()
+    {
+        // The MSBuild re-evaluation runs OUTSIDE _lock. It is async work that resumes on thread
+        // pool threads, and the loader itself takes _lock to publish each project — so blocking
+        // on it while holding _lock deadlocks the continuation against its own caller. A separate
+        // gate serializes reloads instead, and _lock is taken only for the short publish below.
+        if (!_reloadGate.Wait(0))
         {
-            _loadError = ex.Message;
-            _logger.LogError(ex, "Workspace background load failed");
-            throw;
+            // Another reload is already in flight. Its result supersedes ours, so wait for it
+            // rather than queueing a second full evaluation behind it.
+            _reloadGate.Wait();
+            _reloadGate.Release();
+            return;
+        }
+
+        try
+        {
+            // Re-check under the gate: the reload we may have queued behind already cleared this.
+            if (!_projectModelDirty) return;
+            _projectModelDirty = false;
+
+            _logger.LogInformation("Reloading project model (build files changed)");
+            var stopwatch = Stopwatch.StartNew();
+
+            try
+            {
+                // MSBuildWorkspace won't re-open a solution over existing projects, so the old
+                // model has to go first. Compilations are dropped with it: they were built
+                // against the stale references that caused the reload.
+                _workspace.CloseSolution();
+                _compilationCache.Clear();
+                lock (_lock)
+                {
+                    _projects.Clear();
+                }
+                _loadedProjects = 0;
+                _totalProjects = 0;
+
+                LoadProjectsAsync(_projectFilter).GetAwaiter().GetResult();
+
+                foreach (var diag in _workspace.Diagnostics)
+                    _logger.LogWarning("MSBuild: {Message}", diag.Message);
+
+                lock (_lock)
+                {
+                    _currentSolution = _workspace.CurrentSolution;
+
+                    // The rebuilt solution reflects the build files, but any .cs written since
+                    // the last flush is only on disk. A full resync reconciles those without
+                    // needing the pending set, which the reload has just invalidated anyway.
+                    _pendingChanges.Clear();
+                    _fullResyncNeeded = false;
+                    FullResync();
+                }
+
+                _logger.LogInformation("Project model reloaded in {Elapsed}ms ({Count} projects)",
+                    stopwatch.ElapsedMilliseconds, _projects.Count);
+            }
+            catch (Exception ex)
+            {
+                // A half-written csproj (mid-save, or a merge in progress) must not take the
+                // server down. Keep serving the previous model and retry on the next change.
+                _logger.LogError(ex, "Project model reload failed — continuing with the previously loaded model");
+            }
+            finally
+            {
+                Interlocked.Increment(ref _projectModelReloadCount);
+            }
+        }
+        finally
+        {
+            _reloadGate.Release();
         }
     }
 
@@ -459,12 +636,25 @@ public sealed class RoslynWorkspace : IDisposable
     /// <summary>Returns the named project, or throws if not found.</summary>
     public Project GetProject(string name)
     {
-        if (!_projects.TryGetValue(name, out var project))
-            throw new ArgumentException($"Project '{name}' not found. Available: {string.Join(", ", _projects.Keys)}");
-        return project;
+        // Reload first: a project added to the solution after startup would otherwise be
+        // reported as missing, listing only the projects that existed at load time.
+        ApplyPendingChanges();
+        lock (_lock)
+        {
+            if (!_projects.TryGetValue(name, out var project))
+                throw new ArgumentException($"Project '{name}' not found. Available: {string.Join(", ", _projects.Keys)}");
+            return project;
+        }
     }
 
-    public IReadOnlyCollection<Project> AllProjects => _projects.Values;
+    public IReadOnlyCollection<Project> AllProjects
+    {
+        get
+        {
+            ApplyPendingChanges();
+            lock (_lock) return _projects.Values.ToArray();
+        }
+    }
 
     /// <summary>
     /// Returns the current solution snapshot after applying any pending file changes.
@@ -627,6 +817,8 @@ public sealed class RoslynWorkspace : IDisposable
     public void Dispose()
     {
         _watcher.Dispose();
+        _buildFileWatcher.Dispose();
+        _reloadGate.Dispose();
         _workspace.Dispose();
     }
 }
