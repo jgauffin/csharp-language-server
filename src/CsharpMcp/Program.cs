@@ -39,7 +39,20 @@ var services = builder.Services
     .AddMcpServer(options =>
     {
         options.ServerInfo = new Implementation { Name = config.Name, Version = serverVersion };
-        var instructions = "C# and NuGet code intelligence server powered by Roslyn. Provides navigation, type info, diagnostics, refactoring, and NuGet package exploration for .NET projects.";
+        // Agents default to grep/glob/whole-file reads. The instructions land in the agent's system
+        // prompt, so they state which tool replaces which habit rather than describing the server.
+        var instructions =
+            $"C# code intelligence (Roslyn) for the .NET solution at {config.RootPath}. " +
+            "For C# code, use these tools instead of grep, glob or reading whole files: " +
+            "locate a type or member by name: find. " +
+            "See what a file contains before reading it: get_outline. " +
+            "Where a symbol is declared: get_definition. " +
+            "Everything that uses a symbol: get_references; callers/callees: get_call_hierarchy; " +
+            "implementations of an interface or abstract member: get_implementations; base/derived types: get_type_hierarchy. " +
+            "Resolved type, signature and docs: get_hover. " +
+            "Compile errors after editing: get_diagnostics, not dotnet build. " +
+            "Renaming: rename (preview first). " +
+            "Grep is only the right tool for string literals and comments.";
         if (config.Description is not null)
             instructions += " " + config.Description;
         options.ServerInstructions = instructions;

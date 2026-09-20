@@ -9,13 +9,13 @@ namespace CsharpMcp.CodeAnalysis;
 [McpServerToolType]
 public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
 {
-    [McpServerTool, Description("Jump from a symbol usage to its declaration.")]
+    [McpServerTool, Description("Jump from a symbol usage to its declaration. Use instead of grepping for 'class X' or 'void X('.")]
     public Task<string> get_definition(string filePath, int line, int column) =>
         Safe(
             () => NavigationTools.GetDefinitionAsync(workspace.Solution, new Position(filePath, line, column)),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Find all usages of a symbol with read/write classification. Use maxResults to limit output.")]
+    [McpServerTool, Description("Find all usages of a symbol across the solution with read/write classification. Use instead of grepping for a name: resolves overloads and excludes matches in comments, strings and unrelated symbols with the same name. Use maxResults to limit output.")]
     public Task<string> get_references(string filePath, int line, int column, int maxResults = 200) =>
         Safe(
             () => NavigationTools.GetReferencesAsync(workspace.Solution, new Position(filePath, line, column), maxResults),
@@ -66,7 +66,7 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
             return parts.Count > 0 ? string.Join("\n\n", parts) : "No information at position.";
         });
 
-    [McpServerTool, Description("Hierarchical outline of types and members in a file. Use flat=true for a flat symbol list instead.")]
+    [McpServerTool, Description("Hierarchical outline of types and members in a file with line numbers. Call this before reading a C# file, then read only the members you need. Use flat=true for a flat symbol list instead.")]
     public Task<string> get_outline(string filePath, [Description("Return flat symbol list instead of hierarchy")] bool flat = false) =>
         flat
             ? Safe(
@@ -82,14 +82,14 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
             () => CodeStructureTools.GetImportsAsync(workspace.Solution, filePath),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Search symbols by name pattern (glob: *, ? or substring). Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project name (glob or substring). Use maxResults to limit output.")]
+    [McpServerTool, Description("Search symbols by name pattern (glob: *, ? or substring). Use instead of grep or file globbing to locate a type or member: returns declaration file and line. Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project name (glob or substring). Use maxResults to limit output.")]
     public Task<string> find(
         string namePattern, string? kind = null, string? projectName = null, int maxResults = 200) =>
         Safe(
             () => SemanticSearchTools.FindAsync(workspace.Solution, namePattern, kind, projectName, maxResults),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Get errors and warnings. Provide filePath for a single file, or omit for workspace-wide diagnostics. Use projectName to filter by project (glob or substring). Default filters to Warning+Error; use minSeverity='info' or 'hidden' for more.")]
+    [McpServerTool, Description("Get compile errors and warnings without running dotnet build. Provide filePath for a single file, or omit for workspace-wide diagnostics. Use projectName to filter by project (glob or substring). Default filters to Warning+Error; use minSeverity='info' or 'hidden' for more.")]
     public Task<string> get_diagnostics(
         [Description("File path for single-file diagnostics. Omit for workspace-wide.")] string? filePath = null,
         [Description("Filter by project name (glob or substring). Only used for workspace-wide.")] string? projectName = null,
