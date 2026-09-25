@@ -22,10 +22,27 @@ public static class NavigationTools
         return PositionHelper.ToLocation(span, target.ToDisplayString());
     }
 
-    public record ReferenceResult(Location Location, bool IsWrite);
+    public record ReferenceResult(Location Location, ReferenceKind Kind, string? EnclosingMember);
 
-    public static async Task<List<ReferenceResult>> GetReferencesAsync(Solution solution, Position pos, int maxResults = 200)
+    /// <summary>
+    /// Narrows a reference set server-side so the agent does not have to fetch and discard sites.
+    /// Every filter is optional; omitting all of them returns every reference.
+    /// </summary>
+    public record ReferenceFilter(
+        string? Usage = null,
+        string? InEnclosingMember = null,
+        string? EnclosingAlsoCalls = null,
+        string? FilePattern = null,
+        string? InProject = null,
+        bool ExcludeTests = false,
+        bool ExcludeGenerated = false);
+
+    public static async Task<List<ReferenceResult>> GetReferencesAsync(
+        Solution solution, Position pos, int maxResults = 200, ReferenceFilter? filter = null)
     {
+        filter ??= new ReferenceFilter();
+        ReferenceKind? wantedKind = filter.Usage is null ? null : ReferenceClassifier.ParseUsage(filter.Usage);
+
         var (doc, offset) = await PositionHelper.ResolveAsync(solution, pos);
         var symbol = await SymbolFinder.FindSymbolAtPositionAsync(doc, offset);
         if (symbol is null) return [];
@@ -36,10 +53,37 @@ public static class NavigationTools
         foreach (var refSymbol in refs)
         foreach (var location in refSymbol.Locations)
         {
-            var span = location.Location.GetLineSpan();
+            if (!location.Location.IsInSource) continue;
+
+            var filePath = location.Location.SourceTree?.FilePath ?? "";
+            if (filter.FilePattern is { } filePattern && !ProjectTools.MatchesPattern(filePath, filePattern)) continue;
+            if (filter.ExcludeTests && SymbolFilters.IsTestPath(filePath)) continue;
+            if (filter.ExcludeGenerated && SymbolFilters.IsGeneratedPath(filePath)) continue;
+            if (filter.InProject is { } projectPattern
+                && !ProjectTools.MatchesPattern(location.Document.Project.Name, projectPattern)) continue;
+
+            var root = await location.Document.GetSyntaxRootAsync();
+            var node = root?.FindToken(location.Location.SourceSpan.Start).Parent;
+
+            var kind = node is null ? ReferenceKind.Read : ReferenceClassifier.Classify(node);
+            if (wantedKind is { } wanted && kind != wanted) continue;
+
+            var enclosing = node is null ? null : ReferenceClassifier.FindEnclosing(node);
+
+            if (filter.InEnclosingMember is { } memberPattern
+                && (enclosing is null || !ProjectTools.MatchesPattern(enclosing.Name, memberPattern))) continue;
+
+            if (filter.EnclosingAlsoCalls is { } callPattern)
+            {
+                if (enclosing is null) continue;
+                var model = await location.Document.GetSemanticModelAsync();
+                if (model is null || !ReferenceClassifier.CallsMatching(enclosing.Declaration, model, callPattern)) continue;
+            }
+
             results.Add(new ReferenceResult(
-                PositionHelper.ToLocation(span),
-                false
+                PositionHelper.ToLocation(location.Location.GetLineSpan()),
+                kind,
+                enclosing?.Name
             ));
 
             if (results.Count >= maxResults) return results;
@@ -291,15 +335,8 @@ public static class NavigationTools
                 .FirstOrDefault(n => n is not null);
             if (projectName == rootProject) score += 2;
 
-            if (filePath.Contains("Test", StringComparison.OrdinalIgnoreCase) ||
-                filePath.Contains("Spec", StringComparison.OrdinalIgnoreCase))
-                score -= 2;
-
-            var fileName = Path.GetFileName(filePath);
-            if (fileName.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
-                fileName.EndsWith(".designer.cs", StringComparison.OrdinalIgnoreCase) ||
-                fileName.Equals("AssemblyInfo.cs", StringComparison.OrdinalIgnoreCase))
-                score -= 10;
+            if (SymbolFilters.IsTestPath(filePath)) score -= 2;
+            if (SymbolFilters.IsGeneratedPath(filePath)) score -= 10;
         }
 
         return score;

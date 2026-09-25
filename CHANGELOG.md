@@ -2,6 +2,18 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versioning follows [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- `get_references` filters the result on the server: `usage` (read, write, invocation, instantiation, typeref, inheritance, typeof, nameof, attribute), `inEnclosingMember`, `enclosingAlsoCalls`, `filePattern`, `inProject`, `excludeTests`, `excludeGenerated`. An agent asking "which callers assign this and also call SaveChanges" no longer fetches every site and reads each one.
+- `find` filters on `filePattern`, `namespacePattern`, `accessibility`, `hasAttribute`, `excludeTests` and `excludeGenerated`.
+- Each reference reports what it does with the symbol and the member it sits in, so a listing is actionable without a follow-up read.
+
+### Fixed
+
+- Directory exclusion applies below the workspace root instead of anywhere in the absolute path. A root that itself sat under `bin`, `obj` or `packages` had every subdirectory pruned, so the server loaded no projects at all.
+
 ## 1.1.0 - 2026-08-30
 
 ### Added

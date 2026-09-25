@@ -63,6 +63,22 @@ public class WorkspaceDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public void EnumerateFiles_RootInsideAnExcludedDirectory_StillFindsProjects()
+    {
+        // The exclusion names describe what lies below the root, not where the root happens to sit.
+        // A root under someone else's build output would otherwise have every subdirectory pruned
+        // and the server would load no projects at all.
+        var nested = Path.Combine(_root, "bin", "Release", "Workspace");
+        Directory.CreateDirectory(Path.Combine(nested, "Lib"));
+        File.WriteAllText(Path.Combine(nested, "Lib", "Lib.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+
+        var found = RoslynWorkspace.EnumerateFiles(nested, "*.csproj").ToArray();
+
+        found.ShouldHaveSingleItem();
+        Path.GetFileName(found[0]).ShouldBe("Lib.csproj");
+    }
+
+    [Fact]
     public void EnumerateFiles_FailsWhenTheWalkOutlivesItsTimeout()
     {
         var ex = Should.Throw<TimeoutException>(

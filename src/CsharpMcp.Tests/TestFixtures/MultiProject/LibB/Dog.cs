@@ -17,3 +17,9 @@ public class DogMath
 
     public int AddLegs(int otherLegs) => _calculator.Add(4, otherLegs);
 }
+
+/// <summary>Carries an attribute so attribute filtering has something to match.</summary>
+[System.Serializable]
+public class DogRegistry
+{
+}

@@ -42,13 +42,27 @@ public static class SemanticSearchTools
         return false;
     }
 
+    /// <summary>
+    /// Narrows a symbol search server-side. Every filter is optional.
+    /// </summary>
+    public record FindFilter(
+        string? FilePattern = null,
+        string? NamespacePattern = null,
+        string? Accessibility = null,
+        string? HasAttribute = null,
+        bool ExcludeTests = false,
+        bool ExcludeGenerated = false);
+
     public static async Task<List<FindResult>> FindAsync(
         Solution solution,
         string namePattern,
         string? kind = null,
         string? projectName = null,
-        int maxResults = 200)
+        int maxResults = 200,
+        FindFilter? filter = null)
     {
+        filter ??= new FindFilter();
+
         var projects = projectName is not null
             ? solution.Projects.Where(p => ProjectTools.MatchesPattern(p.Name, projectName))
             : solution.Projects;
@@ -67,10 +81,27 @@ public static class SemanticSearchTools
                 if (kind is not null && !MatchesKind(sym, kind))
                     continue;
 
+                if (filter.Accessibility is { } accessibility && !SymbolFilters.MatchesAccessibility(sym, accessibility))
+                    continue;
+
+                if (filter.HasAttribute is { } attribute && !SymbolFilters.HasAttribute(sym, attribute))
+                    continue;
+
+                if (filter.NamespacePattern is { } namespacePattern
+                    && !ProjectTools.MatchesPattern(sym.ContainingNamespace?.ToDisplayString() ?? "", namespacePattern))
+                    continue;
+
                 var loc = sym.Locations.FirstOrDefault(l => l.IsInSource);
                 if (loc is null) continue;
 
                 var span = loc.GetLineSpan();
+
+                if (filter.FilePattern is { } filePattern && !ProjectTools.MatchesPattern(span.Path, filePattern))
+                    continue;
+
+                if (filter.ExcludeTests && SymbolFilters.IsTestPath(span.Path)) continue;
+                if (filter.ExcludeGenerated && SymbolFilters.IsGeneratedPath(span.Path)) continue;
+
                 results.Add(new FindResult(
                     sym.Name,
                     sym.Kind.ToString(),

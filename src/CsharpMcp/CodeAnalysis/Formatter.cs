@@ -53,7 +53,9 @@ public static class TextFormatter
         foreach (var r in refs)
         {
             sb.Append(r.Location.FilePath).Append(':').Append(r.Location.Line).Append(':').Append(r.Location.Column);
-            if (r.IsWrite) sb.Append(" [write]");
+            // Read is the common case; tagging only the rest keeps the listing short.
+            if (r.Kind != ReferenceKind.Read) sb.Append(" [").Append(r.Kind.ToString().ToLowerInvariant()).Append(']');
+            if (r.EnclosingMember != null) sb.Append(" in ").Append(r.EnclosingMember);
             if (r.Location.Preview != null) sb.Append(' ').Append(r.Location.Preview);
             sb.AppendLine();
         }

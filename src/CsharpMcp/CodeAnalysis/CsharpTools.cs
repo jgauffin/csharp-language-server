@@ -15,10 +15,25 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
             () => NavigationTools.GetDefinitionAsync(workspace.Solution, new Position(filePath, line, column)),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Find all usages of a symbol across the solution with read/write classification. Use instead of grepping for a name: resolves overloads and excludes matches in comments, strings and unrelated symbols with the same name. Use maxResults to limit output.")]
-    public Task<string> get_references(string filePath, int line, int column, int maxResults = 200) =>
+    [McpServerTool, Description(
+        "Find all usages of a symbol across the solution. Use instead of grepping for a name: resolves overloads and " +
+        "excludes matches in comments, strings and unrelated symbols with the same name. Each hit is tagged with what it " +
+        "does with the symbol and the member it sits in. The filters narrow the result on the server, so prefer them over " +
+        "fetching everything and reading each site.")]
+    public Task<string> get_references(
+        string filePath, int line, int column, int maxResults = 200,
+        [Description("Keep only hits of this kind: read, write, invocation, instantiation, typeref, inheritance, typeof, nameof, attribute")] string? usage = null,
+        [Description("Keep only hits inside a member whose Type.Member name matches (glob or substring), e.g. 'OrderService.Save'")] string? inEnclosingMember = null,
+        [Description("Keep only hits whose enclosing member also calls or constructs something matching (glob or substring), e.g. 'SaveChanges'")] string? enclosingAlsoCalls = null,
+        [Description("Keep only hits in files matching (glob or substring)")] string? filePattern = null,
+        [Description("Keep only hits in projects matching (glob or substring)")] string? inProject = null,
+        [Description("Drop hits in test files")] bool excludeTests = false,
+        [Description("Drop hits in generated files (.g.cs, .designer.cs, obj/)")] bool excludeGenerated = false) =>
         Safe(
-            () => NavigationTools.GetReferencesAsync(workspace.Solution, new Position(filePath, line, column), maxResults),
+            () => NavigationTools.GetReferencesAsync(
+                workspace.Solution, new Position(filePath, line, column), maxResults,
+                new NavigationTools.ReferenceFilter(
+                    usage, inEnclosingMember, enclosingAlsoCalls, filePattern, inProject, excludeTests, excludeGenerated)),
             TextFormatter.Format);
 
     [McpServerTool, Description("Find concrete implementations of an interface member or abstract method.")]
@@ -82,11 +97,24 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
             () => CodeStructureTools.GetImportsAsync(workspace.Solution, filePath),
             TextFormatter.Format);
 
-    [McpServerTool, Description("Search symbols by name pattern (glob: *, ? or substring). Use instead of grep or file globbing to locate a type or member: returns declaration file and line. Optionally filter by kind (class, interface, enum, struct, delegate, method, property, field, event, namespace) and project name (glob or substring). Use maxResults to limit output.")]
+    [McpServerTool, Description(
+        "Search symbols by name pattern (glob: *, ? or substring). Use instead of grep or file globbing to locate a type or " +
+        "member: returns declaration file and line. Optionally filter by kind (class, interface, enum, struct, delegate, " +
+        "method, property, field, event, namespace) and project name (glob or substring). The filters narrow the result on " +
+        "the server, so prefer them over fetching everything and reading each declaration. Use maxResults to limit output.")]
     public Task<string> find(
-        string namePattern, string? kind = null, string? projectName = null, int maxResults = 200) =>
+        string namePattern, string? kind = null, string? projectName = null, int maxResults = 200,
+        [Description("Keep only symbols declared in files matching (glob or substring)")] string? filePattern = null,
+        [Description("Keep only symbols in namespaces matching (glob or substring)")] string? namespacePattern = null,
+        [Description("Keep only symbols with this accessibility: public, internal, private or protected")] string? accessibility = null,
+        [Description("Keep only symbols carrying an attribute matching (glob or substring), e.g. 'ApiController'")] string? hasAttribute = null,
+        [Description("Drop symbols declared in test files")] bool excludeTests = false,
+        [Description("Drop symbols declared in generated files (.g.cs, .designer.cs, obj/)")] bool excludeGenerated = false) =>
         Safe(
-            () => SemanticSearchTools.FindAsync(workspace.Solution, namePattern, kind, projectName, maxResults),
+            () => SemanticSearchTools.FindAsync(
+                workspace.Solution, namePattern, kind, projectName, maxResults,
+                new SemanticSearchTools.FindFilter(
+                    filePattern, namespacePattern, accessibility, hasAttribute, excludeTests, excludeGenerated)),
             TextFormatter.Format);
 
     [McpServerTool, Description("Get compile errors and warnings without running dotnet build. Provide filePath for a single file, or omit for workspace-wide diagnostics. Use projectName to filter by project (glob or substring). Default filters to Warning+Error; use minSeverity='info' or 'hidden' for more.")]

@@ -181,7 +181,7 @@ public sealed class RoslynWorkspace : IDisposable
     private void TrackBuildFileChange(string path)
     {
         var full = Path.GetFullPath(path);
-        if (IsExcludedPath(full)) return;
+        if (IsExcludedBelow(RootPath, full)) return;
         if (!IsBuildFile(full)) return;
 
         _logger.LogInformation("Build file changed ({Path}) — project model will reload on next use", full);
@@ -212,7 +212,7 @@ public sealed class RoslynWorkspace : IDisposable
     private void TrackChange(string path, ChangeKind kind)
     {
         var full = Path.GetFullPath(path);
-        if (IsExcludedPath(full)) return;
+        if (IsExcludedBelow(RootPath, full)) return;
         _pendingChanges[full] = kind;
 
         if (_pendingChanges.Count <= MaxPendingChanges) return;
@@ -247,8 +247,8 @@ public sealed class RoslynWorkspace : IDisposable
 
             foreach (var sub in Directory.EnumerateDirectories(dir, "*", ShallowOptions))
             {
-                // IsExcludedPath matches "/name/", so a directory needs its trailing separator.
-                if (IsExcludedPath(sub + Path.DirectorySeparatorChar)) continue;
+                // IsExcludedBelow matches "/name/", so a directory needs its trailing separator.
+                if (IsExcludedBelow(root, sub + Path.DirectorySeparatorChar)) continue;
                 pending.Push(sub);
             }
         }
@@ -813,6 +813,14 @@ public sealed class RoslynWorkspace : IDisposable
             || normalized.Contains("/.idea/")
             || normalized.Contains("/packages/");
     }
+
+    /// <summary>
+    /// Excludes only what lies beneath <paramref name="root"/>. The root itself may sit inside a
+    /// directory the names above would exclude — a workspace opened under someone's build output,
+    /// for instance — and that must not prune the whole tree.
+    /// </summary>
+    public static bool IsExcludedBelow(string root, string path) =>
+        IsExcludedPath(Path.DirectorySeparatorChar + Path.GetRelativePath(root, path));
 
     public void Dispose()
     {
