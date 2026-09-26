@@ -103,7 +103,8 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
         "method, property, field, event, namespace) and project name (glob or substring). The filters narrow the result on " +
         "the server, so prefer them over fetching everything and reading each declaration. Use maxResults to limit output.")]
     public Task<string> find(
-        string namePattern, string? kind = null, string? projectName = null, int maxResults = 200,
+        [Description("Name pattern to match (glob with * and ?, or a substring)")] string query,
+        string? kind = null, string? projectName = null, int maxResults = 200,
         [Description("Keep only symbols declared in files matching (glob or substring)")] string? filePattern = null,
         [Description("Keep only symbols in namespaces matching (glob or substring)")] string? namespacePattern = null,
         [Description("Keep only symbols with this accessibility: public, internal, private or protected")] string? accessibility = null,
@@ -112,7 +113,7 @@ public class CsharpTools(RoslynWorkspace workspace, ILogger<CsharpTools> logger)
         [Description("Drop symbols declared in generated files (.g.cs, .designer.cs, obj/)")] bool excludeGenerated = false) =>
         Safe(
             () => SemanticSearchTools.FindAsync(
-                workspace.Solution, namePattern, kind, projectName, maxResults,
+                workspace.Solution, query, kind, projectName, maxResults,
                 new SemanticSearchTools.FindFilter(
                     filePattern, namespacePattern, accessibility, hasAttribute, excludeTests, excludeGenerated)),
             TextFormatter.Format);

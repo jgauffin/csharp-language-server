@@ -58,13 +58,19 @@ var services = builder.Services
         options.ServerInstructions = instructions;
     })
     .WithStdioServerTransport()
-    .WithTools<CsharpTools>();
+    .WithTools(ExplainedErrorTool.For<CsharpTools>());
 
 if (config.EnableQuality)
-    services.WithTools<QualityHotspotsTools>();
+{
+    builder.Services.AddSingleton<QualityHotspotsTools>();
+    services.WithTools(ExplainedErrorTool.For<QualityHotspotsTools>());
+}
 
 if (config.EnableNuget)
-    services.WithTools<CsharpMcp.Nuget.NugetTools>();
+{
+    builder.Services.AddSingleton<CsharpMcp.Nuget.NugetTools>();
+    services.WithTools(ExplainedErrorTool.For<CsharpMcp.Nuget.NugetTools>());
+}
 
 await builder.Build().RunAsync();
 return 0;
